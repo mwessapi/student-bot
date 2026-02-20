@@ -12,8 +12,8 @@ def listen(message):
         return
     text = message.text.lower()
     if any(word in text for word in KEYWORDS):
-        username = message.from_user.username if message.from_user.username else "بدون معرف"
-        group = message.chat.title if message.chat.title else "دردشة"
+        username = message.from_user.username if message.from_user.username else "No_Username"
+        group = message.chat.title if message.chat.title else "Group"
         msg = f"📢 طلب جديد\n👤 المستخدم: @{username}\n👥 المجموعة: {group}\n\n💬 الطلب:\n{message.text}"
         try:
             bot.send_message(CHANNEL, msg)
@@ -21,4 +21,3 @@ def listen(message):
             print(f"Error: {e}")
 
 bot.infinity_polling()
-

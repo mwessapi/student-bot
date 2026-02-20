@@ -4,7 +4,7 @@ from telebot import types
 TOKEN = "8414496098:AAEqASKbIaaPwf0OQs95tYVE3qTwJOio_Zs"
 bot = telebot.TeleBot(TOKEN)
 
-# قائمة الكلمات المفتاحية المحدثة (تشمل "واجب" و "حد" والأعذار)
+# القائمة الشاملة للكلمات المفتاحية
 KEYWORDS = [
     "واجب", "حد", "مطلوب", "أحتاج", "ابي", "بغيت", "مين يحل", "مين يسوي", "مساعدة في", 
     "عذر", "اعذار", "عذر طبي", "سكليف", "sick leave", "تقرير طبي",
@@ -22,33 +22,32 @@ def listen(message):
     
     text = message.text.lower()
     
-    # التحقق من وجود الكلمات المفتاحية
     if any(word in text for word in KEYWORDS):
         username = message.from_user.username
         user_id = message.from_user.id
         group_name = message.chat.title if message.chat.title else "Group"
         
-        # محاولة جلب رابط المجموعة
-        try:
-            if message.chat.username:
-                group_link = f"https://t.me/{message.chat.username}"
-            else:
-                group_link = bot.export_chat_invite_link(message.chat.id)
-        except:
-            group_link = "Private Group"
+        # إنشاء رابط الرسالة المباشر (Message Link)
+        chat_id_str = str(message.chat.id).replace("-100", "") # للمجموعات الخارقة
+        message_id = message.message_id
+        
+        if message.chat.username:
+            # إذا كانت المجموعة عامة
+            msg_link = f"https://t.me/{message.chat.username}/{message_id}"
+        else:
+            # إذا كانت المجموعة خاصة
+            msg_link = f"https://t.me/c/{chat_id_str}/{message_id}"
 
-        # تنسيق الرسالة لسرعة المنافسة بين مقدمي الخدمة
+        # تنسيق الرسالة المحدث
         msg = f"⚡️ **طلب جديد - سارع بالتواصل**\n" \
               f"─────────────────\n" \
               f"👤 **العميل:** @{username if username else 'بدون معرف'}\n" \
-              f"🆔 **ID:** `{user_id}`\n" \
               f"📍 **المجموعة:** {group_name}\n" \
-              f"🔗 **الرابط:** [اضغط لدخول المجموعة]({group_link})\n\n" \
-              f"📝 **الطلب:**\n{message.text}\n" \
+              f"🔗 **رابط الرسالة:** [انقر للانتقال للطلب في القروب]({msg_link})\n\n" \
+              f"📝 **نص الطلب:**\n{message.text}\n" \
               f"─────────────────\n" \
               f"👇 **تواصل مع العميل مباشرة:**"
 
-        # زر المراسلة الفورية
         markup = types.InlineKeyboardMarkup()
         if username:
             btn_contact = types.InlineKeyboardButton("💬 مراسلة الطالب (خاص)", url=f"tg://resolve?domain={username}")

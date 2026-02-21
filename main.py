@@ -21,7 +21,7 @@ def keep_alive():
     t.start()
 # ---------------------------------------------------------
 
-TOKEN = "8414496098:AAEqASKbIaaPwf0OQs95tYVE3qTwJOio_Zs"
+TOKEN = "8414496098:AAGbAhsbf-7DnBoJT4tW0ZMN_osGyy_rntQ"
 bot = telebot.TeleBot(TOKEN)
 
 # قائمة الكلمات المفتاحية الشاملة التي حددتها لمشروعك

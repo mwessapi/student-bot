@@ -45,7 +45,7 @@ async def handler(event):
 
         if any(word in text.lower() for word in keywords):
             # نطاق الطول المثالي للطلبات
-            if 15 <= length <= 150:
+            if 5 <= length <= 150:
                 
                 # جلب بيانات المرسل والمجموعة
                 sender = await event.get_sender()

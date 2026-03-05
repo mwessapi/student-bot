@@ -1,49 +1,59 @@
-import asyncio
-from telethon import TelegramClient, events
-
-# بيانات API العامة
-API_ID = 2040 
-API_HASH = 'b18441a1ff607e10a989891a5462e627'
-TARGET_CHANNEL = 'student1_admin' 
-
-client = TelegramClient('session_name', API_ID, API_HASH)
+import re
+from datetime import datetime
 
 @client.on(events.NewMessage)
-async def my_event_handler(event):
-    if event.is_private: return 
-    
-    # القائمة الشاملة للكلمات
-    KEYWORDS = [
-        "واجب", "حل", "بحث", "مشاريع", "مشروع", "اختبار", "كويز", 
-        "ميد", "فاينل", "تلخيص", "بوربوينت", "عرض", "تخرج", "أبي حل", 
-        "احتاج حل", "مساعدة", "تكليف", "واجبات", "assignment", "quiz",
-        "هومورك", "عملي", "نظري", "تقرير", "بحوث", "حلول"
-    ]
-    
-    message_text = event.message.message.lower()
-    if any(word in message_text for word in KEYWORDS):
-        sender = await event.get_sender()
-        chat = await event.get_chat()
+async def handler(event):
+    try:
+        if event.is_private: return 
         
-        alert_msg = (
-            f"🚀 **طلب جديد مرصود**\n"
-            f"──────────────────\n"
-            f"👤 **العميل:** @{sender.username if sender.username else 'بدون يوزر'}\n"
-            f"📍 **المصدر:** {chat.title}\n\n"
-            f"📝 **النص:**\n_{message_text}_\n"
-            f"──────────────────\n"
-            f"🔗 [مراسلة العميل](tg://user?id={sender.id})"
-        )
-        await client.send_message(TARGET_CHANNEL, alert_msg)
+        text = event.raw_text.strip()
+        length = len(text)
+        
+        # 1. الفلاتر الصارمة ضد الإعلانات والمروجين
+        # تجاهل أي رسالة تحتوي على يوزر، روابط، أو تطبيقات أخرى
+        if any(x in text for x in ['@', 'http', 'wa.me', 't.me', 'snapchat', 'instagram']):
+            return
+        
+        # تجاهل الرسائل التي تحتوي على أرقام هواتف طويلة
+        if re.search(r'\d{8,}', text):
+            return
 
-async def main():
-    print("بدء تشغيل الرصد الشامل...")
-    await client.start()
-    print("الرصد يعمل الآن، يرجى مراقبة السجلات لإدخال الرقم إذا طلب منك.")
-    await client.run_until_disconnected()
+        # 2. القائمة الشاملة (طلبات + أعذار + "حد")
+        keywords = [
+            'حد', 'واجب', 'حل', 'كويز', 'اختبار', 'مشروع', 'بحث', 'تخرج', 
+            'عذر', 'اعذار', 'إجازة مرضية', 'تقرير طبي', 'سكليف', 'غياب',
+            'ممكن حل', 'أحتاج مساعدة', 'ميد ترم', 'فاينل', 'مين يعرف'
+        ]
+        
+        # 3. كلمات الاستبعاد لضمان "نظافة" القناة
+        forbidden = ['ثقة', 'دقة', 'انجاز', 'ضمان', 'تواصل', 'واتساب', 'سعر', 'متوفر']
 
-# تشغيل الكود بطريقة متوافقة مع Render
-if __name__ == '__main__':
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(main())
+        # 4. شروط الدقة (الطول المناسب لطلب الطالب)
+        if any(word in text.lower() for word in keywords):
+            # تم ضبط الطول ليكون بين 20 و 65 حرفاً لالتقاط الجمل القصيرة مثل "حد يحل واجب؟"
+            if 20 <= length <= 65:
+                if not any(bad in text for bad in forbidden):
+                    
+                    # --- واجهة العرض الاحترافية ---
+                    chat = await event.get_chat()
+                    chat_title = chat.title if hasattr(chat, 'title') else "مجموعة غير معروفة"
+                    time_now = datetime.now().strftime("%I:%M %p")
+                    
+                    display_message = (
+                        f"**🌟 رصد جديد (طلب/استفسار)**\n"
+                        f"‏━━━━━━━━━━━━━━━━━━\n"
+                        f"**📍 المصدر:** `{chat_title}`\n"
+                        f"**⏰ الوقت:** `{time_now}`\n"
+                        f"‏━━━━━━━━━━━━━━━━━━\n"
+                        f"**📝 نص الرسالة:**\n"
+                        f"_{text}_\n"
+                        f"‏━━━━━━━━━━━━━━━━━━\n"
+                        f"**🔗 الإجراء:** [الانتقال للمحادثة](https://t.me/c/{chat.id}/{event.id})"
+                    )
+                    
+                    # إرسال الرسالة للقناة
+                    await client.send_message('student1_admin', display_message, link_preview=False)
+                    print(f"✅ تم رصد طلب يحتوي على كلمة (حد) من: {chat_title}")
+                
+    except Exception as e:
+        print(f"⚠️ خطأ: {e}")

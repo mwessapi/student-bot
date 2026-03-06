@@ -6,30 +6,41 @@ from flask import Flask
 from telethon import TelegramClient, events, Button
 from telethon.errors import FloodWaitError
 
-# ================== إعدادات Gemini والكلمات ==================
-GEMINI_KEY = "AIzaSyDenjy_-AcZAYpBQWpFGAbqgMoS6UiPPnA" 
-genai.configure(api_key=GEMINI_KEY)
-ai_model = genai.GenerativeModel('gemini-1.5-flash')
+# ================== 1. إعدادات الحماية والذكاء ==================
+# سحب المفتاح سرياً من Render لحمايتك من الحظر
+GEMINI_KEY = os.environ.get("GEMINI_KEY")
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    ai_model = None
 
-# --- 1. القائمة الشاملة للكلمات المطلوبة (المأخوذة من كودك السابق) ---
+# ================== 2. قاعدة بيانات الكلمات الشاملة ==================
+
+# كلمات البحث (المطلوبة) - تشمل كل ما يحتاجه الطلاب
 ALL_KEYWORDS = [
+    # كلمات عامية وطلبات مساعدة
     'حد', 'مين', 'كيف', 'متى', 'سؤال', 'استفسار', 'يعرف', 'يفيدني', 'احتاج', 'ممكن',
     'أبغى', 'ابي', 'وش', 'ايش', 'شنو', 'تكفون', 'ساعدوني', 'بالله', 'لو سمحتو',
-    'واجب', 'حل', 'كويز', 'اختبار', 'مشروع', 'بحث', 'تخرج', 'مهندس', 'تصميم', 'برمجة',
-    'كود', 'إحصاء', 'رياضيات', 'فيزياء', 'كيمياء', 'ترجمة', 'محاسبة', 'اقتصاد', 'ميد', 'فاينل',
-    'عذر', 'غياب', 'سكليف', 'مرضية', 'تجسير', 'دوام', 'تدريب', 'صيفي', 'مادة', 'دكتور',
-    'شرح', 'ملخص', 'مساعدة', 'عاجل', 'ضروري', 'تكفى', 'يا جماعة', 'شباب', 'جامعة'
+    'تكفى', 'يا جماعة', 'شباب', 'يا عيال', 'مين يقدر', 'مساعدة', 'عاجل', 'ضروري',
+    
+    # كلمات دراسية وأكاديمية
+    'واجب', 'حل', 'كويز', 'اختبار', 'مشروع', 'بحث', 'تخرج', 'ميد', 'فاينل', 'تقرير',
+    'تلخيص', 'شرح', 'مادة', 'دكتور', 'استاذ', 'محاضرة', 'جامعة', 'كلية', 'تخصص',
+    
+    # كلمات تقنية (تخصصك)
+    'برمجة', 'تصميم', 'كود', 'إحصاء', 'رياضيات', 'فيزياء', 'كيمياء', 'ترجمة', 'محاسبة',
+    'اقتصاد', 'هندسة', 'سي شارب', 'داتابيز', 'شبكات', 'باكيت تريسر', 'بايثون', 'عرض', 'بوربوينت'
 ]
 
-# --- 2. القائمة السوداء (التي يتجاهلها البوت تماماً) ---
+# كلمات الإقصاء (الممنوعة) - لتنظيف القناة من الإعلانات
 FORBIDDEN_WORDS = [
     'تواصل', 'واتساب', 'واتس', 'للتواصل', 'ارباح', 'استثمار', 'ضمان', 'سعرنا',
-    'راسلني خاص', 'درجة كاملة', 'جميع القطاعات', 'فحص دوري',
-    'تأشيرات', 'موجود حل', 'يوجد حل', 'متوفر حل', 'عقد ايجار', 'كشف طبي',
-    'نقل كفالة', 'تجديد اقامة', 'منصة قوى', 'تسجيل في حافز'
+    'راسلني خاص', 'درجة كاملة', 'جميع القطاعات', 'فحص دوري', 'تأشيرات', 
+    'موجود حل', 'يوجد حل', 'متوفر حل', 'عقد ايجار', 'كشف طبي', 'قوى', 'حافز'
 ]
 
-# ================== الإعدادات الأساسية ==================
+# ================== 3. الإعدادات الأساسية ==================
 API_ID = 2040 
 API_HASH = "b18441a1ff607e10a989891a5462e627"
 TARGET_CHANNEL = "student1_admin"
@@ -37,7 +48,7 @@ MY_USER_ID = 6190186046
 
 app = Flask(__name__)
 @app.route('/')
-def home(): return "الرادار الشامل (Gemini + All Keywords) يعمل!"
+def home(): return "الرادار الشامل (Gemini + All Keywords) يعمل بنجاح!"
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
@@ -52,7 +63,7 @@ accounts = [
 processed_ids = set()
 gemini_working = True 
 
-# ================== دالة التحليل الذكية ==================
+# ================== 4. منطق التحليل الذكي ==================
 async def analyze_message(client, text):
     global gemini_working
     
@@ -62,41 +73,40 @@ async def analyze_message(client, text):
         
     text_lower = text.lower()
 
-    # ب. الفلترة المسبقة (تجاهل الكلمات الممنوعة فوراً)
+    # ب. فلترة الإعلانات الممنوعة
     if any(forbidden in text_lower for forbidden in FORBIDDEN_WORDS):
         return False
 
-    # ج. التأكد من وجود إحدى الكلمات المطلوبة
+    # ج. التأكد من وجود كلمة مفتاحية واحدة على الأقل
     if not any(keyword in text_lower for keyword in ALL_KEYWORDS):
         return False
 
-    # د. محاولة استخدام Gemini للتحليل النهائي
-    try:
-        loop = asyncio.get_event_loop()
-        prompt = (
-            "أنت خبير تصنيف. حلل النص بعناية:\n"
-            f"النص: '{text}'\n"
-            "القواعد:\n"
-            "1. أجب 'YES' إذا كان الشخص (طالب) يطلب مساعدة دراسية.\n"
-            "2. أجب 'NO' إذا كان النص إعلان لشخص يقدم حلولاً أو دردشة عادية.\n"
-            "أجب بكلمة واحدة فقط: YES أو NO."
-        )
-        response = await loop.run_in_executor(None, lambda: ai_model.generate_content(prompt))
-        
-        if not gemini_working:
-            gemini_working = True
-            await client.send_message(MY_USER_ID, "✅ Gemini عاد للعمل!")
+    # د. التحقق عبر Gemini (إذا كان متاحاً)
+    if ai_model:
+        try:
+            loop = asyncio.get_event_loop()
+            prompt = (
+                "أنت خبير تصنيف. أجب بـ YES فقط إذا كان النص هو طالب يطلب مساعدة دراسية.\n"
+                "أجب بـ NO إذا كان النص إعلان لشخص يقدم حلولاً أو مجرد دردشة.\n"
+                f"النص: '{text}'"
+            )
+            response = await loop.run_in_executor(None, lambda: ai_model.generate_content(prompt))
             
-        return "yes" in response.text.lower()
-        
-    except Exception:
-        if gemini_working:
-            gemini_working = False
-            await client.send_message(MY_USER_ID, "⚠️ تعطل Gemini! الرادار يعمل بالكلمات فقط.")
-        # في حال تعطل الذكاء الاصطناعي، نعتمد على الكلمات المفتاحية التي وجدناها في الخطوة (ج)
-        return True
+            if not gemini_working:
+                gemini_working = True
+                await client.send_message(MY_USER_ID, "✅ تم استعادة اتصال Gemini بأمان!")
+                
+            return "yes" in response.text.lower()
+            
+        except Exception:
+            if gemini_working:
+                gemini_working = False
+                await client.send_message(MY_USER_ID, "⚠️ تعطل Gemini! الرادار يعمل بالكلمات حالياً.")
+            return True # الاستمرار بنظام الكلمات عند تعطل الذكاء
+    
+    return True
 
-# ================== تشغيل الرصد ==================
+# ================== 5. تشغيل الرصد ==================
 async def start_radar(acc):
     client = TelegramClient(acc['session'], API_ID, API_HASH)
     
@@ -117,9 +127,9 @@ async def start_radar(acc):
                 buttons.append([Button.url("💬 مراسلة خاصة", f"https://t.me/{username}")])
             buttons.append([Button.url("⤴️ الرد في المجموعة", f"https://t.me/c/{event.chat_id}/{event.id}")])
 
-            status = "🤖 Gemini" if gemini_working else "📡 كلمات"
+            tag = "🤖 Gemini" if gemini_working else "📡 كلمات"
             msg = (
-                f"⚡️ **رصد نشط عبر {status}**\n"
+                f"✅ **رصد جديد عبر {tag}**\n"
                 f"👤 **العميل:** {getattr(sender, 'first_name', 'مستخدم')}\n"
                 f"📍 **المصدر:** `{getattr(event.chat, 'title', 'مجموعة')}`\n"
                 f"‏━━━━━━━━━━━━━━━━━━\n"
@@ -130,7 +140,8 @@ async def start_radar(acc):
             
             try:
                 await client.send_message(TARGET_CHANNEL, msg, buttons=buttons)
-                await asyncio.sleep(4) 
+                # زيادة التأخير لتجنب الحظر (FloodWait)
+                await asyncio.sleep(6) 
             except FloodWaitError as e:
                 await asyncio.sleep(e.seconds)
             except: pass
@@ -143,3 +154,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+

@@ -14,13 +14,23 @@ if GEMINI_KEY:
 else:
     ai_model = None
 
-# ================== 2. قوائم الفلترة الشاملة ==================
+# ================== 2. القائمة الشاملة للكلمات والاستفسارات ==================
 ALL_KEYWORDS = [
+    # طلبات عامة واستفسارات
     'حد', 'مين', 'كيف', 'متى', 'سؤال', 'استفسار', 'يعرف', 'يفيدني', 'احتاج', 'ممكن',
     'أبغى', 'ابي', 'وش', 'ايش', 'شنو', 'تكفون', 'ساعدوني', 'بالله', 'لو سمحتو',
+    'تكفى', 'يا جماعة', 'شباب', 'يا عيال', 'مين يقدر', 'مساعدة', 'عاجل', 'ضروري',
+    
+    # كلمات دراسية وأكاديمية
     'واجب', 'حل', 'كويز', 'اختبار', 'مشروع', 'بحث', 'تخرج', 'ميد', 'فاينل', 'تقرير',
-    'شرح', 'مادة', 'دكتور', 'جامعة', 'برمجة', 'تصميم', 'كود', 'إحصاء', 'رياضيات',
-    'فيزياء', 'كيمياء', 'سي شارب', 'C#', 'داتابيز', 'SQL', 'باكيت تريسر', 'بوربوينت'
+    'تلخيص', 'شرح', 'مادة', 'دكتور', 'استاذ', 'محاضرة', 'جامعة', 'كلية', 'تخصص',
+    'سلايدات', 'ملخص', 'نماذج', 'اسئلة', 'مراجعة', 'مذاكرة', 'تاسك', 'هومورك',
+    
+    # كلمات تقنية وبرمجية (تخصصك IT)
+    'برمجة', 'تصميم', 'كود', 'إحصاء', 'رياضيات', 'فيزياء', 'كيمياء', 'ترجمة', 'محاسبة',
+    'اقتصاد', 'هندسة', 'سي شارب', 'C#', 'داتابيز', 'SQL', 'شبكات', 'باكيت تريسر', 
+    'Packet Tracer', 'بايثون', 'عرض', 'بوربوينت', 'لوغو', 'هوية بصرية', 'فوتوشوب',
+    'اندرويد', 'تطبيق', 'موقع', 'سيرفر', 'فرونت', 'باك'
 ]
 
 FORBIDDEN_WORDS = ['تواصل', 'واتساب', 'ارباح', 'استثمار', 'ضمان', 'فحص دوري', 'تأشيرات']
@@ -29,94 +39,74 @@ FORBIDDEN_WORDS = ['تواصل', 'واتساب', 'ارباح', 'استثمار',
 API_ID = 2040 
 API_HASH = "b18441a1ff607e10a989891a5462e627"
 TARGET_CHANNEL = "student1_admin"
-MY_USER_ID = 6190186046 # حسابك لتلقي إشعارات الأعطال
+MY_USER_ID = 6190186046 
 
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Radar with Gemini + Auto-Fallback is Live"
+def home(): return "Full-Radar is Online"
 
-def run_flask():
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
-
-threading.Thread(target=run_flask, daemon=True).start()
-
-accounts = [{'name': '1', 'session': 'session_name'}, {'name': '2', 'session': 'session_2'}]
-processed_ids = set()
-gemini_working = True # متغير لمراقبة حالة الذكاء الاصطناعي
-
-# ================== 4. التحليل الذكي مع نظام التنبيه بالأعطال ==================
+# ================== 4. التحليل الذكي مع نظام Fallback ==================
 async def analyze_message(client, text):
-    global gemini_working
     if not (5 <= len(text) <= 150): return False
-    
     text_lower = text.lower()
+    
+    # استبعاد الإعلانات
     if any(bad in text_lower for bad in FORBIDDEN_WORDS): return False
+    
+    # البحث عن أي كلمة من القائمة الشاملة
     if not any(word in text_lower for word in ALL_KEYWORDS): return False
 
+    # التحقق عبر Gemini لضمان أنه "طلب" وليس "دردشة"
     if ai_model:
         try:
             loop = asyncio.get_event_loop()
-            prompt = f"هل هذا طالب يطلب مساعدة دراسية؟ أجب بـ YES أو NO فقط: {text}"
+            prompt = f"أجب بـ YES فقط إذا كان النص هو طالب يطلب مساعدة في دراسة أو مشروع، وإلا NO: {text}"
             response = await loop.run_in_executor(None, lambda: ai_model.generate_content(prompt))
-            
-            if not gemini_working:
-                gemini_working = True
-                await client.send_message(MY_USER_ID, "✅ **أبشر! عاد نظام Gemini للعمل بنجاح.**")
-            
             return "yes" in response.text.lower()
-        except Exception as e:
-            if gemini_working:
-                gemini_working = False
-                # إرسال تنبيه لك عند توقف الذكاء الاصطناعي
-                await client.send_message(MY_USER_ID, f"⚠️ **تنبيه: توقف Gemini عن العمل مؤقتاً.**\nسيستمر الرادار بالعمل بنظام الكلمات المفتاحية لضمان استمرار الطلبات.")
-            return True # العودة التلقائية لنظام الكلمات (Fallback)
+        except:
+            return True # إذا تعطل Gemini، نعتمد على الكلمات
     return True
 
-# ================== 5. تشغيل الرصد بالتنسيق المعتمد ==================
+# ================== 5. نظام التشغيل المستقر ==================
 async def start_radar(acc):
-    client = TelegramClient(acc['session'], API_ID, API_HASH)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    client = TelegramClient(acc['session'], API_ID, API_HASH, loop=loop)
+    
     @client.on(events.NewMessage)
     async def handler(event):
         if event.is_private or not event.raw_text: return
-        msg_id = f"{event.chat_id}_{event.id}"
-        if msg_id in processed_ids: return
-        processed_ids.add(msg_id)
-
-        # نمرر الكلاينت للدالة لكي يتمكن من مراسلتك عند العطل
         if await analyze_message(client, event.raw_text):
             sender = await event.get_sender()
             username = getattr(sender, 'username', None)
             user_id = getattr(sender, 'id', 'غير معروف')
             
-            buttons = []
-            if username:
-                buttons.append([Button.url("💬 مراسلة الطالب (خاص)", f"https://t.me/{username}")])
-
-            # التنسيق النظيف الذي اخترته
+            buttons = [[Button.url("💬 مراسلة الطالب (خاص)", f"https://t.me/{username}")]] if username else []
+            
             clean_msg = (
-                f"💗 خدمات طلابيه\n"
-                f"⚡️ طلب خدمة طلابية جديد\n"
-                f"‏━━━━━━━━━━━━━━━━━━\n"
-                f"👤 العميل: @{username if username else 'بدون_يوزر'}\n"
-                f"🆔 ID: `{user_id}`\n"
+                f"💗 خدمات طلابيه\n⚡️ طلب خدمة طلابية جديد\n━━━━━━━━━━━━━━━━━━\n"
+                f"👤 العميل: @{username if username else 'بدون_يوزر'}\n🆔 ID: `{user_id}`\n"
                 f"📍 المصدر: {getattr(event.chat, 'title', 'مجموعة')}\n"
                 f"🔗 [انتقل للرسالة الأصلية](https://t.me/c/{str(event.chat_id).replace('-100', '')}/{event.id})\n"
-                f"‏━━━━━━━━━━━━━━━━━━\n"
-                f"📝 نص الطلب:\n"
-                f"{event.raw_text}\n"
-                f"‏━━━━━━━━━━━━━━━━━━\n"
-                f"👇 تواصل مع العميل مباشرة:"
+                f"━━━━━━━━━━━━━━━━━━\n📝 نص الطلب:\n{event.raw_text}\n━━━━━━━━━━━━━━━━━━\n👇 تواصل مع العميل مباشرة:"
             )
-
             try:
                 await client.send_message(TARGET_CHANNEL, clean_msg, buttons=buttons, link_preview=False)
-                await asyncio.sleep(6) # منع الـ FloodWait
-            except FloodWaitError as e:
-                await asyncio.sleep(e.seconds)
+                await asyncio.sleep(6) # تأخير لمنع الحظر
             except: pass
 
     await client.start()
     await client.run_until_disconnected()
 
+def run_flask():
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+
 if __name__ == '__main__':
-    asyncio.run(asyncio.gather(*(start_radar(acc) for acc in accounts)))
+    threading.Thread(target=run_flask, daemon=True).start()
+    accounts = [{'session': 'session_name'}, {'session': 'session_2'}]
+    for acc in accounts:
+        threading.Thread(target=lambda: asyncio.run(start_radar(acc)), daemon=True).start()
+    
+    while True:
+        import time
+        time.sleep(10)

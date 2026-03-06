@@ -1,4 +1,5 @@
 telethon
 flask
-httpx
+google-generativeai
+
 

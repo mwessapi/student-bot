@@ -295,7 +295,7 @@ def format_message(event, sender, chat, radar_name, score, classification, match
     first_name = getattr(sender, 'first_name', 'مستخدم')
     user_id = sender.id
     chat_title = getattr(chat, 'title', 'مجموعة')
-        cid = str(chat.id)
+    cid = str(chat.id)
     if cid.startswith('-100'):
         link = f"https://t.me/c/{cid[4:]}/{event.id}"
     else:

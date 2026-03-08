@@ -47,8 +47,7 @@ logger.info(f"✅ سيرفر الويب يعمل على المنفذ {os.environ
 # ================== 3. متغيرات البيئة ==================
 logger.info("📋 جاري تحميل متغيرات البيئة...")
 
-API_ID = os.environ.get("API_ID")
-API_HASH = os.environ.get("API_HASH")
+API_ID = os.environ.get("API_ID")API_HASH = os.environ.get("API_HASH")
 TARGET_CHANNEL = os.environ.get("TARGET_CHANNEL")
 
 # التحقق من المتغيرات الأساسية
@@ -195,8 +194,7 @@ def is_duplicate(chat_id, message_id):
 def normalize_arabic(text):
     text = re.sub(r'[إأآا]', 'ا', text)
     text = re.sub(r'[ةه]', 'ه', text)
-    text = re.sub(r'[ىي]', 'ي', text)   
-    text = re.sub(r'[\u064B-\u065F\u0670]', '', text)
+    text = re.sub(r'[ىي]', 'ي', text)    text = re.sub(r'[\u064B-\u065F\u0670]', '', text)
     return text.strip().lower()
 
 def contains_link(text):
@@ -245,8 +243,7 @@ def calculate_score(text):
     for k, v in inquiry_keywords['كلمات إجراء أكاديمي'].items():
         if k in text_norm:
             inquiry_score += v
-            matched.append(f"📋{k}")
-            break
+            matched.append(f"📋{k}")            break
     
     if inquiry_score > 0:
         has_context = any(ctx in text_norm for ctx in academic_context)
@@ -289,41 +286,63 @@ def calculate_score(text):
     
     return score, classification, matched
 
-# ================== 9. تنسيق الرسالة ==================
+# ================== 9. تنسيق الرسالة (✅ النسخة النهائية: بدون كلمات، بدون نقاط) ==================
 def format_message(event, sender, chat, radar_name, score, classification, matched, text):
     username = getattr(sender, 'username', None)
     first_name = getattr(sender, 'first_name', 'مستخدم')
-    user_id = sender.id
-    chat_title = getattr(chat, 'title', 'مجموعة')
-    cid = str(chat.id)
-    if cid.startswith('-100'):
-        link = f"https://t.me/c/{cid[4:]}/{event.id}"
-    else:
-        link = f"https://t.me/c/{abs(chat.id)}/{event.id}"
+    last_name = getattr(sender, 'last_name', '')
+    full_name = f"{first_name} {last_name}".strip() or first_name
+    user_id = sender.id    chat_title = getattr(chat, 'title', 'مجموعة')
     
+    # رابط المجموعة
+    chat_username = getattr(chat, 'username', None)
+    if chat_username:
+        group_link = f"https://t.me/{chat_username}"
+    else:
+        group_link = "#"
+    
+    # رابط الرسالة الأصلية
+    try:
+        chat_id = str(chat.id)
+        if chat_id.startswith('-100'):
+            msg_link = f"https://t.me/c/{chat_id[4:]}/{event.id}"
+        else:
+            msg_link = f"https://t.me/c/{abs(chat.id)}/{event.id}"
+    except:
+        msg_link = "#"
+    
+    # نص الرسالة (مختصر)
     display_text = text[:150] + "..." if len(text) > 150 else text
     
+    # ✅ الرسالة النظيفة (بدون كلمات، بدون نقاط)
     msg = (
-        f"⚡️ **طلب جديد** | {radar_name}\n"
-        f"🕐 `{datetime.now().strftime('%H:%M')}`\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"👤 **من:** {first_name} (`{user_id}`)\n"
-        f"🔖 **يوزر:** @{username or 'بدون'}\n"
-        f"📍 **في:** {chat_title}\n"
-        f"🔗 [الرسالة]({link})\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"📝 **النص:**\n_{display_text}_\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"📊 **التحليل:** {classification} | نقاط: {score}\n"
-        f"🔍 **الكلمات:** {', '.join(matched[:5])}\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"👇 **إجراءات:**"
+        f"⚡️ **طلب خدمة طلابية جديد**\n"
+        f"🕐 `{datetime.now().strftime('%H:%M')}` | عبر {radar_name}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👤 **العميل:** {full_name}\n"
+        f"🔖 **اليوزر:** @{username or 'بدون'}\n"
+        f"🆔 **ID:** `{user_id}`\n"
+        f"📍 **المصدر:** {chat_title}\n"
+        f"🔗 [الرسالة الأصلية]({msg_link})\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📝 **نص الطلب:**\n_{display_text}_\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📊 **التصنيف:** {classification}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👇 **إجراءات سريعة:**"
     )
     
+    # الأزرار
     buttons = []
+    
+    # زر المراسلة الخاصة (إذا يوجد يوزر)
     if username:
-        buttons.append([Button.url("💬 مراسلة", f"t.me/{username}")])
-    buttons.append([Button.url("🔗 الانتقال", link)])
+        buttons.append([Button.url("💬 مراسلة الطالب", f"https://t.me/{username}")])
+    
+    # زر المجموعة
+    buttons.append([Button.url("👥 الذهاب للمجموعة", group_link)])
+        # زر الرسالة الأصلية
+    buttons.append([Button.url("🔗 الانتقال للرسالة", msg_link)])
     
     return msg, buttons
 
@@ -344,7 +363,8 @@ async def start_monitoring(acc_info):
             if event.is_private:
                 return
             if is_duplicate(event.chat_id, event.id):
-                return            
+                return
+            
             text = event.raw_text.strip()
             if not text:
                 return
@@ -370,15 +390,14 @@ async def start_monitoring(acc_info):
                 return
             
             sender = await event.get_sender()
-            chat = await event.get_chat()
-            
+            chat = await event.get_chat()            
             msg, buttons = format_message(
                 event, sender, chat, radar_name,
                 score, classification, matched, text
             )
             
             await client.send_message(TARGET_CHANNEL, msg, buttons=buttons, silent=False)
-            logger.info(f"✅ [{radar_name}] {classification} ({score})")
+            logger.info(f"✅ [{radar_name}] {classification}")
             
         except Exception as e:
             logger.error(f"❌ [{radar_name}] خطأ: {e}")
@@ -394,6 +413,7 @@ async def start_monitoring(acc_info):
         finally:
             if client.is_connected():
                 await client.disconnect()
+
 # ================== 11. التشغيل الرئيسي ==================
 async def main():
     logger.info("🚀 بدء رادار الرصد على Render...")

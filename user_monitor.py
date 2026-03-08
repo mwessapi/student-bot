@@ -245,7 +245,8 @@ def calculate_score(text):
     for k, v in inquiry_keywords['كلمات إجراء أكاديمي'].items():
         if k in text_norm:
             inquiry_score += v
-            matched.append(f"📋{k}")            break
+            matched.append(f"📋{k}")
+            break
     
     if inquiry_score > 0:
         has_context = any(ctx in text_norm for ctx in academic_context)

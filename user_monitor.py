@@ -195,7 +195,8 @@ def is_duplicate(chat_id, message_id):
 def normalize_arabic(text):
     text = re.sub(r'[إأآا]', 'ا', text)
     text = re.sub(r'[ةه]', 'ه', text)
-    text = re.sub(r'[ىي]', 'ي', text)    text = re.sub(r'[\u064B-\u065F\u0670]', '', text)
+    text = re.sub(r'[ىي]', 'ي', text)   
+    text = re.sub(r'[\u064B-\u065F\u0670]', '', text)
     return text.strip().lower()
 
 def contains_link(text):

@@ -47,7 +47,8 @@ logger.info(f"✅ سيرفر الويب يعمل على المنفذ {os.environ
 # ================== 3. متغيرات البيئة ==================
 logger.info("📋 جاري تحميل متغيرات البيئة...")
 
-API_ID = os.environ.get("API_ID")API_HASH = os.environ.get("API_HASH")
+API_ID = os.environ.get("API_ID")
+API_HASH = os.environ.get("API_HASH")
 TARGET_CHANNEL = os.environ.get("TARGET_CHANNEL")
 
 if not API_ID or not API_HASH or not TARGET_CHANNEL:

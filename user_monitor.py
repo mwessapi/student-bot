@@ -1,5 +1,5 @@
 # ================== رادار الرصد الذكي لطلبات الطلاب ==================
-# ================== النسخة النهائية لـ Render ==================
+# ================== النسخة النهائية مع روابط ذكية للمجموعات ==================
 
 import os
 import sys
@@ -47,11 +47,9 @@ logger.info(f"✅ سيرفر الويب يعمل على المنفذ {os.environ
 # ================== 3. متغيرات البيئة ==================
 logger.info("📋 جاري تحميل متغيرات البيئة...")
 
-API_ID = os.environ.get("API_ID")
-API_HASH = os.environ.get("API_HASH")
+API_ID = os.environ.get("API_ID")API_HASH = os.environ.get("API_HASH")
 TARGET_CHANNEL = os.environ.get("TARGET_CHANNEL")
 
-# التحقق من المتغيرات الأساسية
 if not API_ID or not API_HASH or not TARGET_CHANNEL:
     logger.error("❌ أحد المتغيرات الأساسية مفقود!")
     logger.error(f"API_ID: {'✅' if API_ID else '❌'}")
@@ -76,8 +74,6 @@ SCORE_THRESHOLD = int(os.environ.get("SCORE_THRESHOLD", "4"))
 MIN_MESSAGE_LENGTH = int(os.environ.get("MIN_MSG_LENGTH", "5"))
 MAX_MESSAGE_LENGTH = int(os.environ.get("MAX_MSG_LENGTH", "70"))
 
-logger.info(f"📋 الإعدادات: عتبة={SCORE_THRESHOLD}, طول={MIN_MESSAGE_LENGTH}-{MAX_MESSAGE_LENGTH}")
-
 # ================== 4. إعداد الحسابات ==================
 accounts = []
 
@@ -98,13 +94,27 @@ if SESSION_2 and SESSION_2.strip():
         'session': SESSION_2.strip()
     })
     logger.info("✅ الحساب الثاني تم تحميله")
+
 if not accounts:
-    logger.error("❌ لم يتم توفير أي جلسة! أضف SESSION_1 في متغيرات البيئة.")
-    sys.exit(1)
+    logger.error("❌ لم يتم توفير أي جلسة! أضف SESSION_1 في متغيرات البيئة.")    sys.exit(1)
 
 logger.info(f"📊 إجمالي الحسابات: {len(accounts)}")
 
-# ================== 5. قوائم الكلمات ==================
+# ================== 5. ⭐ استثناء القناة الخاصة (تحويل فوري) ==================
+SPECIAL_CHANNEL_ID = -1001334211809
+
+# ================== 6. ⭐ روابط دعوة المجموعات (ذكية) ==================
+# للمجموعات الخاصة: أضف رابط الدعوة هنا
+# للمجموعات العامة: اتركها فارغة وسيستخدم البوت @username تلقائياً
+INVITE_LINKS = {
+    # مثال: -1001234567890: "https://t.me/+AbCdEfGhIjK12345",
+    # -1001334211809: "https://t.me/+YourInviteCode",
+}
+
+# رابط دعوة افتراضي (اختياري) لجميع المجموعات الخاصة
+DEFAULT_INVITE_LINK = os.environ.get("DEFAULT_INVITE_LINK", "")
+
+# ================== 7. قوائم الكلمات ==================
 request_keywords = {
     'عالي': {
         'مطلوب': 5, 'ابغى': 4, 'ابي': 4, 'احتاج': 4, 'أحتاج': 4, 
@@ -135,8 +145,7 @@ ad_killers = {
 }
 
 inquiry_keywords = {
-    'أدوات استفهام': {
-        'كيف': 3, 'متى': 3, 'كم': 2, 'أين': 2, 'من': 2, 'هل': 2,
+    'أدوات استفهام': {        'كيف': 3, 'متى': 3, 'كم': 2, 'أين': 2, 'من': 2, 'هل': 2,
         'وش': 2, 'ايش': 2, 'شنو': 2, 'ليه': 2, 'لماذا': 2, 'مين': 2
     },
     'أفعال استفسار': {
@@ -146,7 +155,8 @@ inquiry_keywords = {
     'كلمات إجراء أكاديمي': {
         'أسجل': 4, 'التسجيل': 4, 'شعبة': 3, 'جدول': 3, 'موعد': 3,
         'اختبار': 3, 'امتحان': 3, 'نتيجة': 3, 'رصد': 3, 'غياب': 3,
-        'عذر': 3, 'انسحاب': 3, 'تأجيل': 3, 'نظام': 2, 'بوابة': 2, 'منصة': 2    }
+        'عذر': 3, 'انسحاب': 3, 'تأجيل': 3, 'نظام': 2, 'بوابة': 2, 'منصة': 2
+    }
 }
 
 academic_context = [
@@ -180,18 +190,17 @@ CONTACT_WORDS = [
     'للتحميل', 'للتسجيل', 'اضغط هنا', 'link', 'رابط'
 ]
 
-# ================== 6. منع التكرار ==================
+# ================== 8. منع التكرار ==================
 MAX_SENT_IDS = 10000
 sent_messages = deque(maxlen=MAX_SENT_IDS)
 
-def is_duplicate(chat_id, message_id):
-    key = f"{chat_id}:{message_id}"
+def is_duplicate(chat_id, message_id):    key = f"{chat_id}:{message_id}"
     if key in sent_messages:
         return True
     sent_messages.append(key)
     return False
 
-# ================== 7. دوال المعالجة النصية ==================
+# ================== 9. دوال المعالجة النصية ==================
 def normalize_arabic(text):
     text = re.sub(r'[إأآا]', 'ا', text)
     text = re.sub(r'[ةه]', 'ه', text)
@@ -213,7 +222,7 @@ def contains_phone(text):
     cleaned = re.sub(r'[^\d]', '', text)
     return len(cleaned) >= 10
 
-# ================== 8. نظام التحليل والفرز ==================
+# ================== 10. نظام التحليل والفرز ==================
 def calculate_score(text):
     text_norm = normalize_arabic(text)
     words_set = set(text_norm.split())
@@ -234,8 +243,7 @@ def calculate_score(text):
             if word == k:
                 inquiry_score += v
                 matched.append(f"❓{k}")
-                break
-    
+                break    
     for k, v in inquiry_keywords['أفعال استفسار'].items():
         if k in text_norm:
             inquiry_score += v
@@ -284,73 +292,118 @@ def calculate_score(text):
         score += 1
     if text.endswith('?') or text.endswith('؟'):
         score += 1
-    if len(text_norm) < 8:
-        score -= 2
+    if len(text_norm) < 8:        score -= 2
     
     return score, classification, matched
 
-# ================== 9. تنسيق الرسالة (✅ النسخة النهائية: بدون كلمات، بدون نقاط) ==================
-def format_message(event, sender, chat, radar_name, score, classification, matched, text):
+# ================== 11. ⭐ دالة إنشاء الروابط الذكية ==================
+def get_smart_links(chat, event_id):
+    """
+    ينشئ روابط ذكية للمجموعات:
+    - عامة: t.me/username/message_id (يعمل للجميع)
+    - خاصة: رابط الدعوة من INVITE_LINKS أو DEFAULT_INVITE_LINK
+    """
+    chat_id = chat.id
+    chat_username = getattr(chat, 'username', None)
+    
+    group_link = "#"
+    msg_link = "#"
+    
+    # 🔗 رابط المجموعة (للانضمام)
+    if chat_id in INVITE_LINKS:
+        # رابط مخصص من القائمة
+        group_link = INVITE_LINKS[chat_id]
+    elif chat_username:
+        # مجموعة عامة: رابط يعمل للجميع
+        group_link = f"https://t.me/{chat_username}"
+    elif DEFAULT_INVITE_LINK:
+        # رابط افتراضي للمجموعات الخاصة
+        group_link = DEFAULT_INVITE_LINK
+    
+    # 🔗 رابط الرسالة الأصلية
+    if chat_username:
+        # للمجموعات العامة: رابط مباشر للرسالة (يعمل بدون عضوية)
+        msg_link = f"https://t.me/{chat_username}/{event_id}"
+    else:
+        # للمجموعات الخاصة: رابط داخلي (يعمل فقط للأعضاء)
+        try:
+            cid = str(chat_id)
+            if cid.startswith('-100'):
+                msg_link = f"https://t.me/c/{cid[4:]}/{event_id}"
+            else:
+                msg_link = f"https://t.me/c/{abs(chat_id)}/{event_id}"
+        except:
+            pass
+    
+    return group_link, msg_link
+
+# ================== 12. تنسيق الرسالة ==================
+def format_message(event, sender, chat, radar_name, score, classification, matched, text, is_special=False):
     username = getattr(sender, 'username', None)
     first_name = getattr(sender, 'first_name', 'مستخدم')
-    last_name = getattr(sender, 'last_name', '')
-    full_name = f"{first_name} {last_name}".strip() or first_name
-    user_id = sender.id    
+    last_name = getattr(sender, 'last_name', '')    full_name = f"{first_name} {last_name}".strip() or first_name
+    user_id = sender.id
     chat_title = getattr(chat, 'title', 'مجموعة')
     
-    # رابط المجموعة
-    chat_username = getattr(chat, 'username', None)
-    if chat_username:
-        group_link = f"https://t.me/{chat_username}"
-    else:
-        group_link = "#"
+    # 🔗 الحصول على الروابط الذكية
+    group_link, msg_link = get_smart_links(chat, event.id)
     
-    # رابط الرسالة الأصلية
-    try:
-        chat_id = str(chat.id)
-        if chat_id.startswith('-100'):
-            msg_link = f"https://t.me/c/{chat_id[4:]}/{event.id}"
-        else:
-            msg_link = f"https://t.me/c/{abs(chat.id)}/{event.id}"
-    except:
-        msg_link = "#"
-    
-    # نص الرسالة (مختصر)
+    # نص الرسالة
     display_text = text[:150] + "..." if len(text) > 150 else text
     
-    # ✅ الرسالة النظيفة (بدون كلمات، بدون نقاط)
-    msg = (
-        f"⚡️ **طلب خدمة طلابية جديد**\n"
-        f"🕐 `{datetime.now().strftime('%H:%M')}` | عبر {radar_name}\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"👤 **العميل:** {full_name}\n"
-        f"🔖 **اليوزر:** @{username or 'بدون'}\n"
-        f"🆔 **ID:** `{user_id}`\n"
-        f"📍 **المصدر:** {chat_title}\n"
-        f"🔗 [الرسالة الأصلية]({msg_link})\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"📝 **نص الطلب:**\n_{display_text}_\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"📊 **التصنيف:** {classification}\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"👇 **إجراءات سريعة:**"
-    )
+    # ✅ رسالة القناة الخاصة (تحويل فوري)
+    if is_special:
+        msg = (
+            f"🔴 **تحويل فوري | قناة خاصة**\n"
+            f"🕐 `{datetime.now().strftime('%H:%M')}` | عبر {radar_name}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"👤 **المرسل:** {full_name}\n"
+            f"🔖 **اليوزر:** @{username or 'بدون'}\n"
+            f"🆔 **ID:** `{user_id}`\n"
+            f"📍 **المصدر:** {chat_title} ⭐\n"
+            f"🔗 [الرسالة الأصلية]({msg_link})\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📝 **النص:**\n_{display_text}_\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"👇 **إجراءات سريعة:**"
+        )
+    else:
+        # ✅ رسالة عادية (مع الفلاتر)
+        msg = (
+            f"⚡️ **طلب خدمة طلابية جديد**\n"
+            f"🕐 `{datetime.now().strftime('%H:%M')}` | عبر {radar_name}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"👤 **العميل:** {full_name}\n"
+            f"🔖 **اليوزر:** @{username or 'بدون'}\n"
+            f"🆔 **ID:** `{user_id}`\n"
+            f"📍 **المصدر:** {chat_title}\n"
+            f"🔗 [الرسالة الأصلية]({msg_link})\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📝 **نص الطلب:**\n_{display_text}_\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📊 **التصنيف:** {classification}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"👇 **إجراءات سريعة:**"
+        )
     
     # الأزرار
     buttons = []
     
-    # زر المراسلة الخاصة (إذا يوجد يوزر)
-    if username:
-        buttons.append([Button.url("💬 مراسلة الطالب", f"https://t.me/{username}")])
+    # زر المراسلة الخاصة
+    if username:        buttons.append([Button.url("💬 مراسلة الطالب", f"https://t.me/{username}")])
     
-    # زر المجموعة
-    buttons.append([Button.url("👥 الذهاب للمجموعة", group_link)])
-        # زر الرسالة الأصلية
-    buttons.append([Button.url("🔗 الانتقال للرسالة", msg_link)])
+    # زر المجموعة (رابط ذكي للانضمام)
+    if group_link and group_link != "#":
+        buttons.append([Button.url("👥 الانضمام للمجموعة", group_link)])
+    
+    # زر الرسالة الأصلية
+    if msg_link and msg_link != "#":
+        btn_text = "🔗 رؤية الرسالة" if chat.username else "🔗 الرسالة (للأعضاء)"
+        buttons.append([Button.url(btn_text, msg_link)])
     
     return msg, buttons
 
-# ================== 10. دالة الرصد الرئيسية ==================
+# ================== 13. دالة الرصد الرئيسية ==================
 async def start_monitoring(acc_info):
     client = TelegramClient(
         StringSession(acc_info['session']),
@@ -364,25 +417,58 @@ async def start_monitoring(acc_info):
     @client.on(events.NewMessage)
     async def handler(event):
         try:
+            # تجاهل الرسائل الخاصة
             if event.is_private:
                 return
+            
+            # منع التكرار
             if is_duplicate(event.chat_id, event.id):
                 return
             
+            # استخراج النص
             text = event.raw_text.strip()
             if not text:
                 return
             
+            # الحصول على معلومات المرسل والمجموعة
+            sender = await event.get_sender()
+            chat = await event.get_chat()
+            chat_id = chat.id
+            
+            # ⭐⭐⭐ الاستثناء: القناة الخاصة (تحويل فوري بدون فلاتر) ⭐⭐⭐
+            if chat_id == SPECIAL_CHANNEL_ID:
+                logger.info(f"⭐ [{radar_name}] تحويل فوري من القناة الخاصة")
+                
+                msg, buttons = format_message(                    event, sender, chat, radar_name,
+                    score=0, classification="تحويل_فوري", matched=[],
+                    text=text, is_special=True
+                )
+                
+                await client.send_message(TARGET_CHANNEL, msg, buttons=buttons, silent=False)
+                return  # ✅ خروج فوري - لا تطبق أي فلاتر أخرى
+            
+            # ==========================================
+            # ✅ الفلاتر العادية (لجميع القنوات الأخرى)
+            # ==========================================
+            
+            # فحص الطول
             text_len = len(text)
             if text_len < MIN_MESSAGE_LENGTH or text_len > MAX_MESSAGE_LENGTH:
                 return
             
-            if contains_link(text) or contains_phone(text):
+            # فحص الروابط
+            if contains_link(text):
                 return
             
+            # فحص أرقام الهواتف
+            if contains_phone(text):
+                return
+            
+            # تحليل النص
             score, classification, matched = calculate_score(text)
             is_academic = any(ctx in normalize_arabic(text) for ctx in academic_context)
             
+            # شروط القبول
             should_forward = (
                 score >= SCORE_THRESHOLD or
                 (classification == "استفسار_أكاديمي" and score >= 3) or
@@ -393,19 +479,18 @@ async def start_monitoring(acc_info):
             if not should_forward:
                 return
             
-            sender = await event.get_sender()
-            chat = await event.get_chat()            
+            # تنسيق وإرسال الرسالة العادية
             msg, buttons = format_message(
                 event, sender, chat, radar_name,
-                score, classification, matched, text
+                score, classification, matched, text, is_special=False
             )
             
             await client.send_message(TARGET_CHANNEL, msg, buttons=buttons, silent=False)
             logger.info(f"✅ [{radar_name}] {classification}")
             
-        except Exception as e:
-            logger.error(f"❌ [{radar_name}] خطأ: {e}")
+        except Exception as e:            logger.error(f"❌ [{radar_name}] خطأ: {e}")
     
+    # حلقة الاتصال
     while True:
         try:
             await client.start()
@@ -418,10 +503,11 @@ async def start_monitoring(acc_info):
             if client.is_connected():
                 await client.disconnect()
 
-# ================== 11. التشغيل الرئيسي ==================
+# ================== 14. التشغيل الرئيسي ==================
 async def main():
     logger.info("🚀 بدء رادار الرصد على Render...")
     logger.info(f"📊 الحسابات: {len(accounts)} | القناة: {TARGET_CHANNEL}")
+    logger.info(f"⭐ القناة الخاصة المستثناة: {SPECIAL_CHANNEL_ID}")
     
     tasks = [start_monitoring(acc) for acc in accounts]
     await asyncio.gather(*tasks, return_exceptions=True)

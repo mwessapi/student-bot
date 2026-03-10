@@ -1,5 +1,5 @@
 # ================== رادار الرصد الذكي لطلبات الطلاب ==================
-# ================== النسخة المبسطة النهائية ==================
+# ================== النسخة النهائية المبسطة مع زر العرض ==================
 
 import os
 import sys
@@ -102,15 +102,13 @@ if not accounts:
 
 logger.info(f"📊 إجمالي الحسابات: {len(accounts)}")
 
-# ================== 5. (تم إزالة التمييز – كل القنوات سواء) ==================
+# ================== 5. إزالة أي تمييز للقنوات (كلها سواء) ==================
 
-# ================== 6. روابط دعوة المجموعات ==================
-INVITE_LINKS = {
-    # مثال: -1001234567890: "https://t.me/+AbCdEfGhIjK12345",
-}
+# ================== 6. روابط دعوة المجموعات (اختياري) ==================
+INVITE_LINKS = {}  # يمكنك إضافة روابط للمجموعات الخاصة هنا
 DEFAULT_INVITE_LINK = os.environ.get("DEFAULT_INVITE_LINK", "")
 
-# ================== 7. قوائم الكلمات ==================
+# ================== 7. قوائم الكلمات (كما هي) ==================
 request_keywords = {
     'عالي': {
         'مطلوب': 5, 'ابغى': 4, 'ابي': 4, 'احتاج': 4, 'أحتاج': 4, 
@@ -294,51 +292,47 @@ def calculate_score(text):
         score -= 2
     return score, classification, matched
 
-# ================== 11. الروابط الذكية للمجموعات ==================
-def get_smart_links(chat, event_id):
-    chat_id = chat.id
+# ================== 11. دالة إنشاء رابط الرسالة الأصلية (مطوّرة) ==================
+def get_message_link(chat, message_id):
+    """
+    تنشئ رابطاً مباشراً للرسالة الأصلية.
+    للمجموعات العامة: https://t.me/username/message_id
+    للمجموعات الخاصة: https://t.me/c/chat_id/message_id (تعمل للأعضاء فقط)
+    """
     chat_username = getattr(chat, 'username', None)
     
-    group_link = "#"
-    msg_link = "#"
-    
-    # رابط المجموعة (للانضمام) – لا نستخدمه الآن لكن يمكن إضافته لاحقاً
-    if chat_id in INVITE_LINKS:
-        group_link = INVITE_LINKS[chat_id]
-    elif chat_username:
-        group_link = f"https://t.me/{chat_username}"
-    elif DEFAULT_INVITE_LINK:
-        group_link = DEFAULT_INVITE_LINK
-    
-    # رابط الرسالة الأصلية (سنستخدمه للزر)
     if chat_username:
-        msg_link = f"https://t.me/{chat_username}/{event_id}"
+        # مجموعة عامة
+        return f"https://t.me/{chat_username}/{message_id}"
     else:
+        # مجموعة خاصة
+        chat_id = chat.id
         try:
-            cid = str(chat_id)
-            if cid.startswith('-100'):
-                msg_link = f"https://t.me/c/{cid[4:]}/{event_id}"
+            # Telethon يعيد chat_id بصيغة -100xxxxxxxxx للمجموعات الكبيرة
+            chat_id_str = str(chat_id)
+            if chat_id_str.startswith('-100'):
+                # نزيل -100
+                return f"https://t.me/c/{chat_id_str[4:]}/{message_id}"
             else:
-                msg_link = f"https://t.me/c/{abs(chat_id)}/{event_id}"
+                # مجموعات صغيرة قد تبدأ بـ - فقط
+                return f"https://t.me/c/{abs(chat_id)}/{message_id}"
         except:
-            pass
-    
-    return group_link, msg_link
+            return None
 
 # ================== 12. تنسيق الرسالة (مبسطة جداً) ==================
-def format_message(event, sender, chat, radar_name, score, classification, matched, text):
+def format_message(event, sender, chat, radar_name, classification, text):
     username = getattr(sender, 'username', None)
     first_name = getattr(sender, 'first_name', 'مستخدم')
     last_name = getattr(sender, 'last_name', '')
     full_name = f"{first_name} {last_name}".strip() or first_name
     
-    # الحصول على رابط الرسالة الأصلية فقط
-    _, msg_link = get_smart_links(chat, event.id)
+    # إنشاء رابط الرسالة الأصلية
+    msg_link = get_message_link(chat, event.id)
     
     # نص مختصر
     display_text = text[:150] + "..." if len(text) > 150 else text
     
-    # بناء الرسالة – بدون وقت، بدون ID، بدون مصدر
+    # بناء الرسالة النصية
     msg = (
         f"{radar_name}\n"
         f"━━━━━━━━━━\n"
@@ -350,10 +344,12 @@ def format_message(event, sender, chat, radar_name, score, classification, match
         f"📊 {classification}"
     )
     
-    # الأزرار: زر واحد فقط "عرض الرسالة"
+    # إضافة زر عرض الرسالة إذا توفر الرابط
     buttons = []
-    if msg_link and msg_link != "#":
+    if msg_link:
         buttons.append([Button.url("🔗 عرض الرسالة", msg_link)])
+    else:
+        logger.warning(f"⚠️ لا يمكن إنشاء رابط للرسالة {event.id} في المحادثة {chat.id}")
     
     return msg, buttons
 
@@ -418,14 +414,12 @@ async def start_monitoring(acc_info):
             if not should_forward:
                 return
             
-            # تنسيق وإرسال الرسالة
-            msg, buttons = format_message(
-                event, sender, chat, radar_name,
-                score, classification, matched, text
-            )
+            # تنسيق وإرسال الرسالة مع الأزرار
+            msg, buttons = format_message(event, sender, chat, radar_name, classification, text)
             
-            await client.send_message(TARGET_CHANNEL, msg, buttons=buttons, silent=False)
-            logger.info(f"✅ [{radar_name}] {classification}")
+            # التأكد من إرسال الأزرار (حتى لو كانت قائمة فارغة)
+            await client.send_message(TARGET_CHANNEL, msg, buttons=buttons if buttons else None, silent=False)
+            logger.info(f"✅ [{radar_name}] {classification} (الرابط: {buttons[0][0].url if buttons else 'لا يوجد'})")
             
         except Exception as e:
             logger.error(f"❌ [{radar_name}] خطأ: {e}")

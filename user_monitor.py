@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎓 رادار الخدمات الطلابية أونلاين - النسخة النهائية (أزرار محسّنة)
+🎓 رادار الخدمات الطلابية أونلاين - النسخة النهائية (بدون تكرار + دعم الرسائل الطويلة)
 الوظيفة: رصد أي طلب طالب لخدمة عن بُعد (عروض، واجبات، أعذار طبية، برمجة، خصوصي، تقارير)
 المطور: [اسمك]
 التاريخ: 2026
@@ -67,7 +67,7 @@ SESSION_2 = os.environ.get("SESSION_2", "").strip()
 
 # ================== 5. إعدادات التصفية ==================
 MIN_MSG_LENGTH = int(os.environ.get("MIN_MSG_LENGTH", "10"))
-MAX_MSG_LENGTH = int(os.environ.get("MAX_MSG_LENGTH", "500"))
+MAX_MSG_LENGTH = int(os.environ.get("MAX_MSG_LENGTH", "1000"))  # ⬅️ رفع الحد إلى 1000 حرف
 
 # ================== 6. إعداد حسابات التليجرام ==================
 accounts = []
@@ -181,8 +181,8 @@ def extract_service_description(text: str) -> str:
     for word in request_words:
         result = result.replace(word, '')
     cleaned = result.strip()
-    if len(cleaned) > 120:
-        cleaned = cleaned[:120] + "..."
+    if len(cleaned) > 100:
+        cleaned = cleaned[:100] + "..."
     return cleaned if cleaned else "خدمة طلابية أونلاين"
 
 # ================== 13. نظام التحليل الذكي ==================
@@ -253,7 +253,7 @@ def get_smart_links(chat, event_id: int) -> tuple[str, str]:
 
     return group_link, msg_link
 
-# ================== 15. ⭐ تنسيق رسالة القناة (مع زر مراسلة دائم) ⭐ ==================
+# ================== 15. ⭐ تنسيق رسالة القناة (بدون تكرار + دعم النص الطويل) ⭐ ==================
 def format_forward_message(
     event, sender, chat, radar_name: str,
     classification: str, service_desc: str,
@@ -266,7 +266,12 @@ def format_forward_message(
     user_id = sender.id
     chat_title = getattr(chat, 'title', 'مجموعة')
     group_link, msg_link = get_smart_links(chat, event.id)
-    display_text = text[:180] + "..." if len(text) > 180 else text
+
+    # ⬅️ عرض النص الكامل حتى 400 حرف ثم "..." لتجنب التكرار
+    if len(text) > 400:
+        display_text = text[:400] + "..."
+    else:
+        display_text = text
 
     if is_special:
         msg = (
@@ -284,6 +289,7 @@ def format_forward_message(
             f"👇 **إجراءات سريعة:**"
         )
     else:
+        # ⬅️ إزالة حقل "الخدمة" لأنه تكرار للنص
         msg = (
             f"⚡️ **طلب خدمة طلابية أونلاين**\n"
             f"🕐 `{datetime.now().strftime('%H:%M:%S')}` | عبر {radar_name}\n"
@@ -295,7 +301,6 @@ def format_forward_message(
             f"🔗 [الرسالة الأصلية]({msg_link})\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"📋 **تفاصيل الطلب:**\n_{display_text}_\n"
-            f"🔍 **الخدمة:** {service_desc}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"📊 **الحالة:** {classification}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -303,7 +308,6 @@ def format_forward_message(
         )
 
     buttons = []
-    # ✅ زر المراسلة (يظهر دائماً، باستخدام ID إذا لم يوجد يوزر)
     if username:
         buttons.append([Button.url("💬 مراسلة الطالب", f"https://t.me/{username}")])
     else:
@@ -364,7 +368,7 @@ async def start_monitoring(acc_info: dict):
                 classification, service_desc, text, is_special=False
             )
             await client.send_message(TARGET_CHANNEL, msg, buttons=buttons, silent=False)
-            logger.info(f"✅ [{radar_name}] {classification} | الخدمة: {service_desc[:30]}...")
+            logger.info(f"✅ [{radar_name}] {classification} | النص: {text[:30]}...")
         except Exception as e:
             logger.error(f"❌ [{radar_name}] خطأ في المعالجة: {e}", exc_info=True)
 

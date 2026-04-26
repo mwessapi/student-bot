@@ -66,7 +66,7 @@ SESSION_2 = os.environ.get("SESSION_2", "").strip()
 
 # ================== 5. إعدادات التصفية ==================
 MIN_MSG_LENGTH = int(os.environ.get("MIN_MSG_LENGTH", "10"))
-MAX_MSG_LENGTH = int(os.environ.get("MAX_MSG_LENGTH", "800"))
+MAX_MSG_LENGTH = int(os.environ.get("MAX_MSG_LENGTH", "150"))
 
 # ================== 6. إعداد حسابات التليجرام ==================
 accounts = []

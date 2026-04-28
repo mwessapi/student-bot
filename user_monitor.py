@@ -469,6 +469,7 @@ def format_forward_message(
             f"📍 **المصدر:** {chat_title} ⭐\n"
             f"🔗 [الرسالة الأصلية]({msg_link})\n"
             f"━━━━━━━━━━━━━━━━━━\n"
+            f"📝الطلب:\n_{display_text}_\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"👇 **الطلب👇🏻:**"
         )
@@ -484,6 +485,7 @@ def format_forward_message(
             f"━━━━━━━━━━━━━━━━━━\n"
             f"🎯 **نوع الخدمة:** {service_type}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
+            f"📝الطلب:\n_{display_text}_\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"👇 **الطلب:👇🏻**"
         )

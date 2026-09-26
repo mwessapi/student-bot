@@ -555,7 +555,9 @@ def format_forward_message(
         buttons.append([Button.url("👥 الانضمام للمجموعة", group_link)])
 
     if msg_link and msg_link != "#":
-        btn_text = "🔗 رؤية الرسالة" if chat.username else "🔗 الرسالة (للأعضاء فقط)"
+        # التعديل هنا: استخدام getattr لتجنب الخطأ إذا كانت المجموعة خاصة وليس لها username
+        chat_username = getattr(chat, 'username', None)
+        btn_text = "🔗 رؤية الرسالة" if chat_username else "🔗 الرسالة (للأعضاء فقط)"
         buttons.append([Button.url(btn_text, msg_link)])
 
     return msg, buttons
@@ -647,4 +649,3 @@ if __name__ == '__main__':
         logger.error(f"💥 خطأ فادح في التشغيل: {e}", exc_info=True)
         import traceback
         traceback.print_exc()
-

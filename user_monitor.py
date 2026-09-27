@@ -74,7 +74,7 @@ if SESSION_1:
     accounts.append({'name': 'رادار-1', 'api_id': API_ID, 'api_hash': API_HASH, 'session': SESSION_1})
 if SESSION_2:
     accounts.append({'name': 'رادار-2', 'api_id': API_ID, 'api_hash': API_HASH, 'session': SESSION_2})
-    if SESSION_3:
+if SESSION_3:
     accounts.append({'name': 'رادار-3', 'api_id': API_ID, 'api_hash': API_HASH, 'session': SESSION_3})
 if not accounts:
     logger.error("❌ لم يتم توفير أي جلسة!")

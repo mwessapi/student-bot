@@ -63,7 +63,7 @@ except ValueError:
 
 SESSION_1 = os.environ.get("SESSION_1", "").strip()
 SESSION_2 = os.environ.get("SESSION_2", "").strip()
-
+SESSION_3 = os.environ.get("SESSION_3", "").strip()
 # ================== 5. إعدادات التصفية ==================
 MIN_MSG_LENGTH = int(os.environ.get("MIN_MSG_LENGTH", "10"))
 MAX_MSG_LENGTH = int(os.environ.get("MAX_MSG_LENGTH", "150"))
@@ -74,6 +74,8 @@ if SESSION_1:
     accounts.append({'name': 'رادار-1', 'api_id': API_ID, 'api_hash': API_HASH, 'session': SESSION_1})
 if SESSION_2:
     accounts.append({'name': 'رادار-2', 'api_id': API_ID, 'api_hash': API_HASH, 'session': SESSION_2})
+    if SESSION_3:
+    accounts.append({'name': 'رادار-3', 'api_id': API_ID, 'api_hash': API_HASH, 'session': SESSION_3})
 if not accounts:
     logger.error("❌ لم يتم توفير أي جلسة!")
     sys.exit(1)

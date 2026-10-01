@@ -1,26 +1,36 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎓 رادار الخدمات الطلابية - النسخة المحسّنة 2.0
-المطور: [متولي الوصابي]
-التاريخ: 2026
+🎓 رادار الخدمات الطلابية 4.0
+- رصد الطلبات → القناة
+- رد ذكي من OpenRouter
+- إرسال حساب الأكاديمية عند الرد
+- إشعار لك عند رد الطالب
 """
 
-# ================== 1. استيراد المكتبات ==================
+# ================== 1. المكتبات ==================
 import os
 import sys
 import re
+import json
+import random
 import asyncio
 import threading
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from collections import deque
 
 from flask import Flask, jsonify
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 
-# ================== 2. إعداد التسجيل ==================
+try:
+    from openai import AsyncOpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
+# ================== 2. التسجيل ==================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -33,7 +43,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return f"<h1>🎓 رادار الخدمات الطلابية</h1><p>✅ يعمل {datetime.now().strftime('%H:%M:%S')}</p>"
+    return f"<h1>🎓 رادار الخدمات</h1><p>✅ {datetime.now().strftime('%H:%M:%S')}</p>"
 
 @app.route('/health')
 def health():
@@ -43,32 +53,74 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-threading.Thread(target=run_flask, daemon=True).start()
-logger.info(f"✅ سيرفر الويب يعمل على المنفذ {os.environ.get('PORT', 10000)}")
-
-# ================== 4. تحميل متغيرات البيئة ==================
+# ================== 4. متغيرات البيئة ==================
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 TARGET_CHANNEL = os.environ.get("TARGET_CHANNEL")
 
 if not all([API_ID, API_HASH, TARGET_CHANNEL]):
-    logger.error("❌ خطأ: أحد المتغيرات الأساسية مفقود!")
+    logger.error("❌ متغير أساسي مفقود!")
     sys.exit(1)
 
 try:
     API_ID = int(API_ID)
 except ValueError:
-    logger.error(f"❌ خطأ: API_ID يجب أن يكون رقماً صحيحاً")
+    logger.error("❌ API_ID يجب أن يكون رقماً")
     sys.exit(1)
 
 SESSION_1 = os.environ.get("SESSION_1", "").strip()
 SESSION_2 = os.environ.get("SESSION_2", "").strip()
 SESSION_3 = os.environ.get("SESSION_3", "").strip()
-# ================== 5. إعدادات التصفية ==================
+
 MIN_MSG_LENGTH = int(os.environ.get("MIN_MSG_LENGTH", "10"))
 MAX_MSG_LENGTH = int(os.environ.get("MAX_MSG_LENGTH", "150"))
 
-# ================== 6. إعداد حسابات التليجرام ==================
+# ================== 5. ⭐ الإعدادات الثابتة ==================
+REPLIER_ACCOUNT = "رادار-2"
+AUTO_REPLY_ENABLED = True
+AUTO_REPLY_DAILY_LIMIT = 40
+
+ACADEMY_USERNAME = "m_7_1_1_m"
+ACADEMY_NAME = "أكاديمية خدمات طلابية فورية"
+ACADEMY_TAGLINE = "⚡ سرعة | 🏆 جودة | ✅ موثوقية"
+
+# ================== 6. متغيرات البيئة (أسرار) ==================
+OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+AI_MODEL_NAME = os.environ.get("AI_MODEL_NAME", "google/gemini-flash-1.5:free")
+OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID", "0"))
+
+# ================== 7. OpenRouter ==================
+ai_client = None
+if OPENROUTER_KEY and OPENAI_AVAILABLE:
+    try:
+        ai_client = AsyncOpenAI(
+            api_key=OPENROUTER_KEY,
+            base_url="https://openrouter.ai/api/v1",
+        )
+        logger.info(f"✅ OpenRouter متصل | {AI_MODEL_NAME}")
+    except Exception as e:
+        logger.error(f"❌ فشل OpenRouter: {e}")
+        ai_client = None
+elif not OPENAI_AVAILABLE:
+    logger.warning("⚠️ مكتبة openai غير مثبتة")
+else:
+    logger.warning("⚠️ OPENROUTER_API_KEY غير محدد")
+
+# ================== 8. تخزين ==================
+REPLIED_STUDENTS = {}
+daily_counter = {"date": None, "count": 0}
+
+def can_reply_today() -> bool:
+    today = date.today()
+    if daily_counter["date"] != today:
+        daily_counter["date"] = today
+        daily_counter["count"] = 0
+    if daily_counter["count"] >= AUTO_REPLY_DAILY_LIMIT:
+        return False
+    daily_counter["count"] += 1
+    return True
+
+# ================== 9. الحسابات ==================
 accounts = []
 if SESSION_1:
     accounts.append({'name': 'رادار-1', 'api_id': API_ID, 'api_hash': API_HASH, 'session': SESSION_1})
@@ -77,19 +129,18 @@ if SESSION_2:
 if SESSION_3:
     accounts.append({'name': 'رادار-3', 'api_id': API_ID, 'api_hash': API_HASH, 'session': SESSION_3})
 if not accounts:
-    logger.error("❌ لم يتم توفير أي جلسة!")
+    logger.error("❌ لا توجد جلسات!")
     sys.exit(1)
 
-logger.info(f"📊 إجمالي الحسابات النشطة: {len(accounts)}")
+logger.info(f"📊 الحسابات: {len(accounts)}")
+logger.info(f"🎯 حساب الرد: {REPLIER_ACCOUNT}")
 
-# ================== 7. إعدادات خاصة ==================
-SPECIAL_CHANNEL_ID = int(os.environ.get("SPECIAL_CHANNEL_ID", "-1"))
+SPECIAL_CHANNEL_ID = int(os.environ.get("SPECIAL_CHANNEL_ID", "0"))
 INVITE_LINKS = {}
 DEFAULT_INVITE_LINK = os.environ.get("DEFAULT_INVITE_LINK", "")
 
-# ================== 8. ⭐ القائمة السوداء - محدّثة ومُوسّعة ==================
+# ================== 10. القائمة السوداء ==================
 BLACKLIST_KEYWORDS = {
-    # إعلانات وترويج
     'للتواصل', 'للتسجيل', 'واتساب', 'واتس', 'راسلني', 'لبيع',
     'سعر', 'ريال', 'دولار', 'خصم', 'ضمان', 'استثمار', 'ربح',
     'خدمات تسويق', 'نسوق لكم', 'تسويق منتجات', 'اعلان', 'معلن', 'احجز', 'مقعد', 'سارع', 'محدود',
@@ -100,132 +151,63 @@ BLACKLIST_KEYWORDS = {
     'ضمان النجاح', 'توثيق رسائل', 'تحضير عروض', 'خدمة مدفوعة',
     'للاشتراك', 'اشترك', 'انشر', 'نشر', 'ترويج', 'إشهار', 'متوفر حل',
     'يوجد حل', 'نخلص', 'ننجز', 'ننفذ', 'نقدم أفضل', 'أسعار مميزة',
-    # استفسارات أكاديمية (ليست طلبات خدمة)
     'الاختبار متى', 'المحاضرة متى', 'الدكتور فلان', 'شعبة كم',
     'رابط القروب', 'ملزمة المادة', 'من وين اذاكر', 'اليوم دوام', 'نزلت الدرجات',
     'جدول المحاضرات', 'جدول الاختبارات', 'موعد الاختبار', 'موعد المحاضرة',
     'تنزل الجداول', 'نزلت الجداول', 'الجداول نزلت',
-    # إعلانات رسمية
     '[إعلان]', '🔴 هام', '📢 يعلن', 'فرصة عمل', 'مطلوب للعمل',
-    # مجرد تحيات
     'كيف حالك', 'وش اخبار', 'ايش مسوين', 'شو رأيكم', 'ايش رأيكم',
-    # عروض خدمات (من مزود وليس طالب)
     'نحل', 'نسوي', 'نعطيك', 'تواصل معنا', 'تواصلوا', 'قدم طلبك',
     'اطلب الان', 'اطلب الآن', 'خدمات متنوعة', 'أفضل الأسعار',
     'شركة', 'مؤسسة', 'أكاديمية', 'مركز',
 }
 
-# ================== 9. ⭐ أنماط الطلبات - شاملة ومحسّنة ==================
-#
-# ملاحظة مهمة على هذا التحديث:
-# تم فصل "أفعال التنفيذ" (يسوي/يصمم/يبرمج/يحل...) عن "أفعال المعرفة"
-# (يعرف/يفهم/فيه/عنده...) لأن الفعل "يعرف" لا يعني طلب تنفيذ خدمة،
-# بل هو سؤال معلوماتي (استفسار) مثل "احد يعرف الجدول متى ينزل؟"
-# وهذا كان سبب أغلب الطلبات الخاطئة التي تصل من البوت.
-
-# ── أفعال التنفيذ الفعلية (تدل على طلب "قم بعمل شيء لي") ──
 ACTION_VERBS = (
     r'يسوي|يسوى|يشوي|يكمل|ينفذ|يعمل|يجهز|يخلص|يرسل|يحل|يصلح|'
     r'يكتب|يصمم|يبرمج|يترجم|يعدل|يساعد|يساعدي|يدبر|يضبط|يظبط|'
     r'يشرح|يذاكر|يحضر|يلخص|يعبي|يرسم|يحسب|يسجل'
 )
 
-# ── أفعال المعرفة/الاستفسار (لا تُحتسب كطلب تنفيذ) ──
-# يعرف / يفهم / فيه / عنده / معاه ← هذه تدل على "هل يعلم فلان معلومة؟"
-# وليس "قم بتنفيذ شيء لي"، لذلك استُبعدت تماماً من أنماط التنفيذ.
+PERSON_REF = r'حد|شخص|واحد|أحد|احد|مين|مني|مصمم|مبرمج|مترجم|معلم|مدرس|محلل|مطور|كاتب|مذاكر'
 
-# ── أشخاص/مسميات مهنية يطلبها الطالب مباشرة (مصمم/مبرمج/مترجم...) ──
-# هذه تُضاف إلى الضمائر العامة (حد/شخص/واحد) لأن الطالب أحياناً يطلب
-# المسمى المهني مباشرة بدل قول "حد يسوي": "محتاج مصمم"، "ابغى مبرمج".
-PERSON_REF = r'حد|شخص|واحد|أحد|احد|من|مين|مني|مصمم|مبرمج|مترجم|معلم|مدرس|محلل|مطور|كاتب|مذاكر'
-
-# ── 9أ. أنماط النية الصريحة (الطالب يطلب شخص ينفذ) ──
 EXECUTION_PATTERNS = [
-    # "ابي/احتاج/محتاج حد/شخص/واحد يسوي..." (أو مسمى مهني مباشر مثل: محتاج مصمم)
     rf'(احتاج|احتجاج|محتاج|ابي|ابغى|ابقى|ابا|أبي|أبغى|أحتاج|بدي|حابب|بغيت)\s+({PERSON_REF})(\s+({ACTION_VERBS}))?',
-
-    # "اللي يقدر يسوي..." (يقدر/يعرف يبقيان هنا فقط كصفة قدرة قبل فعل تنفيذ فعلي)
     rf'(اللي|الي|الذي)\s+(يقدر|فيه|عنده|معاه)\s+({ACTION_VERBS})',
-
-    # "مين/من يسوي لي..."
     rf'(مين|من|مني)\s+({ACTION_VERBS})\s*(لي|لنا|لي ضرة|لينا)?',
-
-    # "حد/شخص/واحد يسوي..."
     rf'({PERSON_REF})\s+({ACTION_VERBS})',
-
-    # "ابي عرض/واجب/مشروع..." (طلب مباشر لمنتج/خدمة محددة)
     r'(احتاج|احتجاج|محتاج|ابي|ابغى|ابقى|ابا|بدي|حابب|عندي|مطلوب|بغيت)\s+(عرض|بوربوينت|بور بوينت|ppt|واجب|واجبات|مشروع|تقرير|تقارير|بحث|بحوث|تلخيص|ملخص|ترجمه|ترجمة|برمجه|برمجة|اكسل|excel|وورد|word|تصميم|خصوصي|عذر\s+طبي|تقرير\s+طبي|شهادة\s+صحيه|مدرس\s+خصوصي|حل\s+واجب|حل\s+اسايمنت|اسايمنت|assignment|مشروع\s+تخرج|بروجكت|project|حل\s+تمارين|شرح\s+مادة|حل\s+اختبار|نموذج)',
-
-    # "يصلح/يحل واجب/تكليف..."
     r'(يصل|يصلح|يحل)\s+(واجب|تكليف|اسايمنت|مشروع|بحث|تقرير)',
-
-    # "يساعدني في..."
     r'(يساعدي|تساعدني|يساعدني|تساعدني)\s+في\s+\w+',
-
-    # "تسوي/يسوي لي عرض/واجب..."
     r'(تسوي|تشوي|يسوي|يشوي|يعمل|تعمل)\s+(لي|لنا|لينا)\s+(عرض|بوربوينت|واجب|تقرير|بحث|مشروع|تصميم|برمجه|برمجة)',
-
-    # أستاذ خصوصي
     r'(ابي|ابغى|احتاج|محتاج|ابا|بدي|مطلوب)\s+خصوصي\s*(في|لمادة|لماده|مادة|لـ)?',
     r'(مدرس|معلم|أستاذ|استاذ)\s+خصوصي\s*(في|لمادة|لـ)?\s*(فيزياء|رياضيات|كيمياء|احياء|انجليزي|انجليش|عربي|برمجه|برمجة|محاسبه|محاسبة|اقتصاد|احصاء|تمريض|طب|ادارة|تسويق|ماثس|كالكولس|حساب|جبر|هندسه|هندسة|فيزكس|كيم)?',
     r'(دروس|درس)\s+خصوصيه?\s*(في|لمادة|لـ)?',
     r'(يشرح|يذاكر\s+معي|يذاكر\s+معاي)\s+(مادة|ماده|مواد)?',
-
-    # عذر طبي
     r'(عذر|تقرير|شهادة)\s+(طبي|طبيه|مرضي|صحيه|صحي)\s*(بسعر|برسوم|بفلوس|رخيص)?',
     r'(ابي|احتاج|محتاج)\s+(عذر|إعفاء|اعفاء)\s+(طبي|رسمي)',
-
-    # "أبحث عن حد يسوي..."
     rf'(دور|ابحث|أبحث|نبحث)\s+(لي|لنا)?\s*(عن|على)\s+(حد|شخص|واحد)\s+({ACTION_VERBS})',
-
-    # "يخلص لي الواجب..."
     r'(يخلص|يكمل|ينهي)\s+(لي|لنا)?\s*(الواجب|التكليف|المشروع|الاسايمنت|البحث)',
-
-    # "ودي احد يسوي..."
     rf'(ودي|وداي|وددت|بودي)\s+(احد|حد|شخص)\s+({ACTION_VERBS})',
-
-    # "فيه احد يقدر يسوي..." (يجب أن يتبعها فعل تنفيذ فعلي، وليس "يعرف")
     rf'(فيه|في|هل\s+في|هل\s+فيه|ما\s+في)\s+(احد|حد|شخص|واحد)\s+(يقدر\s+)?({ACTION_VERBS})',
-
-    # "محتاج مساعدة في..."
     r'(محتاج|ابي|احتاج)\s+(مساعده|مساعدة|مساعد)\s+في\s+(برمجه|برمجة|تصميم|اكسل|وورد|واجب|مشروع|بحث|تقرير|عرض)',
-
-    # لغة إنجليزية مع عربي
     r'(need|looking\s+for|want)\s+(someone|anyone|help)\s+(to|for)',
     r'(محتاج|ابي)\s+(freelancer|help|someone)',
 ]
 
-# ── 9ب. أنماط الخدمات المحددة (حتى بدون "حد يسوي") ──
-# ملاحظة: كل الأنماط هنا أصبحت تشترط وجود صيغة طلب صريحة (احتاج/ابي/محتاج/مطلوب...)
-# بشكل إلزامي وليس اختيارياً، لتفادي إمساك أي رسالة تذكر كلمة "جداول" أو "عرض" عرضاً.
 NEED_WORDS = r'(احتاج|محتاج|ابي|ابغى|مطلوب|بدي|بغيت|ابا)'
 
 SERVICE_SPECIFIC_PATTERNS = [
-    # برمجة
     r'(مشروع|بروجكت|project)\s+(برمجه|برمجة|python|java|c\+\+|web|موبايل|تطبيق|app|website)',
     r'(برمجه|برمجة|كود|code)\s+(جاهز|كامل|مكتمل)',
     r'(اسايمنت|assignment)\s+(برمجه|برمجة|python|java|html|css)',
-
-    # تصميم
     rf'{NEED_WORDS}\s+(تصميم|شعار|لوجو|logo|بنر|banner|انفوغراف|infographic)',
-
-    # عروض
     rf'{NEED_WORDS}\s+(عرض|بوربوينت|بور\s+بوينت|ppt|presentation)\s*\w*',
-
-    # تقارير وأبحاث
     rf'{NEED_WORDS}\s+(تقرير|بحث)\s*(عن)?',
-
-    # ترجمة
     rf'(ترجمه|ترجمة)\s+(ملف|وثيقه|نص|مقاله|مقال|بحث)\s*{NEED_WORDS}?',
-
-    # اكسل وبيانات (يشترط الآن وجود صيغة طلب حقيقية، وليس مجرد ذكر الكلمة)
     rf'{NEED_WORDS}\s+(اكسل|excel|جداول|pivot|داشبورد|dashboard)',
-
-    # مشاريع تخرج
     rf'(مشروع\s+تخرج|graduation\s+project|مشروع\s+النهائي)\s*{NEED_WORDS}?',
 ]
 
-# ── 9ج. مؤشرات الاستعجال (تزيد ثقل القرار) ──
 URGENCY_INDICATORS = [
     r'(عاجل|ضروري|مستعجل|بسرعه|بسرعة|اليوم|الحين|هلا|على\s+طول)',
     r'(التسليم|الديدلاين|deadline)\s+(اليوم|غداً|غدا|بكره|بعدين)',
@@ -234,9 +216,7 @@ URGENCY_INDICATORS = [
     r'(فاضل|باقي)\s+(يوم|ساعات|وقت\s+قليل)',
 ]
 
-# ── 9د. أنماط استفسار صريحة يجب رفضها ──
 INQUIRY_PATTERNS = [
-    # أسئلة أكاديمية
     r'^(كيف|كيفه|كيفها)\s+(تحل|تعمل|تسوي|يحل|يعمل|نعمل)',
     r'^(ايش|ايش\s+هو|ما\s+هو|ما)\s+(الفرق|الأفضل|أفضل)',
     r'^(من\s+درس|من\s+شرح|من\s+فهم)\s+\w+',
@@ -244,20 +224,12 @@ INQUIRY_PATTERNS = [
     r'^(هل\s+نزلت|نزلت|صدرت)\s+(الدرجات|النتائج|الجدول|الجداول)',
     r'^(متى|امتى)\s+(الاختبار|المحاضرة|التسليم|الدوام|تنزل|ينزل|تطلع|يطلع)',
     r'^(كم\s+درجة|كم\s+الدرجة|كم\s+السعر)',
-
-    # استطلاع رأي
     r'^(شو|ايش|وش)\s+(رأيكم|رايكم|تقولون|تقول)',
     r'^(من\s+جرب|من\s+استخدم|من\s+اخذ)\s+\w+',
-
-    # نقاشات
     r'^(صح|صحيح|غلط)\s+(ان|إن)',
     r'^(الله\s+يعين|يا\s+حيف|حظ\s+حلو)',
 ]
 
-# ── 9هـ. أسئلة "معرفة/معلومة" - وهذه أهم إضافة جديدة ──
-# أي رسالة يسأل فيها الشخص "هل يعرف أحد كذا؟" هي استفسار معلوماتي
-# (مثل: هل الجدول نزل، هل المعيد فلان زين، متى يوم كذا...) وليست طلب
-# تنفيذ خدمة، حتى لو ذُكرت فيها كلمة تخص خدمة (اكسل، جداول...).
 KNOWLEDGE_QUESTION_PATTERNS = [
     r'(احد|حد|شخص|واحد|أحد)\s+(يعرف|يدري|يفهم)(?!\s+(?:' + ACTION_VERBS + r'))',
     r'(مين|من)\s+(يعرف|يدري)(?!\s+(?:' + ACTION_VERBS + r'))',
@@ -267,11 +239,6 @@ KNOWLEDGE_QUESTION_PATTERNS = [
 ]
 
 def is_knowledge_question(text_norm: str) -> bool:
-    """
-    هل الرسالة مجرد سؤال معلوماتي (هل يعرف أحد كذا) وليست طلب تنفيذ؟
-    نتحقق أيضاً من عدم وجود فعل تنفيذ فعلي في الرسالة قبل الرفض،
-    حتى لا نرفض رسالة مثل: "احد يعرف حد يصمم لوجو؟" (وهذه تحتوي فعل تنفيذ حقيقي).
-    """
     has_real_action = re.search(ACTION_VERBS, text_norm) is not None
     if has_real_action:
         return False
@@ -280,7 +247,6 @@ def is_knowledge_question(text_norm: str) -> bool:
             return True
     return False
 
-# ================== 10. القائمة السوداء ==================
 LINK_PATTERNS = [
     r'https?://\S+', r'www\.\S+', r't\.me/\S+', r'telegram\.me/\S+',
     r'wa\.me/\S+', r'whatsapp\.com/\S+', r'bit\.ly/\S+', r'goo\.gl/\S+',
@@ -294,7 +260,7 @@ CONTACT_WORDS = [
     'call', 'رقم', 'جوال', 'موبايل', 'للتحميل', 'للتسجيل', 'اضغط هنا', 'link', 'رابط'
 ]
 
-# ================== 11. منع تكرار ==================
+# ================== 11. منع التكرار ==================
 MAX_SENT_IDS = 10000
 sent_messages = deque(maxlen=MAX_SENT_IDS)
 
@@ -305,14 +271,13 @@ def is_duplicate(chat_id: int, message_id: int) -> bool:
     sent_messages.append(key)
     return False
 
-# ================== 12. دوال معالجة النصوص ==================
+# ================== 12. معالجة النصوص ==================
 def normalize_arabic(text: str) -> str:
-    """توحيد الكتابة العربية"""
     text = re.sub(r'[إأآا]', 'ا', text)
     text = re.sub(r'[ةه]', 'ه', text)
     text = re.sub(r'[ىي]', 'ي', text)
-    text = re.sub(r'[\u064B-\u065F\u0670]', '', text)  # إزالة التشكيل
-    text = re.sub(r'(.)\1{2,}', r'\1\1', text)  # تقليص التكرار (مثل "ابييي" → "ابي")
+    text = re.sub(r'[\u064B-\u065F\u0670]', '', text)
+    text = re.sub(r'(.)\1{2,}', r'\1\1', text)
     return text.strip().lower()
 
 def contains_link(text: str) -> bool:
@@ -330,28 +295,23 @@ def contains_phone(text: str) -> bool:
     return len(cleaned) >= 10
 
 def is_pure_greeting(text_norm: str) -> bool:
-    """هل الرسالة مجرد تحية؟"""
-    greetings = [
-        'سلام عليكم', 'السلام عليكم', 'مساء الخير', 'صباح النور',
+    greetings = ['سلام عليكم', 'السلام عليكم', 'مساء الخير', 'صباح النور',
         'صباح الخير', 'مساء النور', 'اهلين', 'هلا', 'هاي', 'مرحبا',
         'هلا وغلا', 'اهلا وسهلا', 'يا هلا', 'هلا بالجميع', 'هلا شباب',
-        'حياكم', 'يا اهلين', 'اهلا بكم', 'هلا فيكم'
-    ]
+        'حياكم', 'يا اهلين', 'اهلا بكم', 'هلا فيكم']
     stripped = text_norm.strip()
     for g in greetings:
-        if stripped == g or stripped.startswith(g) and len(stripped) - len(g) < 5:
+        if stripped == g or (stripped.startswith(g) and len(stripped) - len(g) < 5):
             return True
     return False
 
 def is_pure_inquiry(text_norm: str) -> bool:
-    """هل الرسالة مجرد استفسار أكاديمي بدون طلب تنفيذ؟"""
     for pattern in INQUIRY_PATTERNS:
         if re.search(pattern, text_norm, re.IGNORECASE):
             return True
     return False
 
 def is_service_provider(text_norm: str) -> bool:
-    """هل المرسل يعرض خدمة (مزود) وليس يطلبها (طالب)؟"""
     provider_patterns = [
         r'(نحن|نقدم|نوفر|نعمل|نخلص|نسوي)\s+(خدم|عروض|واجب|مشروع)',
         r'(خدماتنا|خدماتي|بخبرة|بخبره)\s+\w+',
@@ -368,7 +328,6 @@ def is_service_provider(text_norm: str) -> bool:
     return False
 
 def get_urgency_score(text_norm: str) -> int:
-    """حساب درجة الاستعجال (0-3)"""
     score = 0
     for pattern in URGENCY_INDICATORS:
         if re.search(pattern, text_norm):
@@ -376,7 +335,6 @@ def get_urgency_score(text_norm: str) -> int:
     return min(score, 3)
 
 def classify_service_type(text_norm: str) -> str:
-    """تصنيف نوع الخدمة المطلوبة"""
     services = {
         '🖥️ برمجة': ['برمجه', 'برمجة', 'كود', 'code', 'python', 'java', 'html', 'css', 'تطبيق', 'app', 'website'],
         '🎨 تصميم': ['تصميم', 'شعار', 'لوجو', 'logo', 'بنر', 'انفوغراف', 'موشن'],
@@ -396,87 +354,217 @@ def classify_service_type(text_norm: str) -> str:
             if kw in text_norm:
                 found.append(service_name)
                 break
-    if found:
-        return ' | '.join(found)
-    return '📌 خدمة طلابية'
+    return ' | '.join(found) if found else '📌 خدمة طلابية'
 
-# ================== 13. ⭐ نظام التحليل الذكي المحسّن ==================
-def analyze_message(text: str) -> tuple[bool, str, str, int]:
-    """
-    تحليل الرسالة وإرجاع: (هل_صالح, التصنيف, نوع_الخدمة, درجة_الاستعجال)
-    """
+def analyze_message(text: str):
     text_norm = normalize_arabic(text)
-
-    # ── فلتر 1: الحد الأدنى والأقصى للطول ──
     text_len = len(text_norm)
     if text_len < MIN_MSG_LENGTH or text_len > MAX_MSG_LENGTH:
         return False, "طول_غير_مناسب", "", 0
 
-    # ── فلتر 2: القائمة السوداء ──
     for bad_word in BLACKLIST_KEYWORDS:
         if normalize_arabic(bad_word) in text_norm:
-            return False, "مرفوض_قائمة_سوداء", "", 0
+            return False, "مرفوض", "", 0
 
-    # ── فلتر 3: روابط وأرقام هواتف ──
     if contains_link(text) or contains_phone(text):
-        return False, "يحتوي_رابط_أو_هاتف", "", 0
-
-    # ── فلتر 4: مجرد تحية ──
+        return False, "رابط_أو_هاتف", "", 0
     if is_pure_greeting(text_norm):
-        return False, "تحية_فقط", "", 0
-
-    # ── فلتر 5: مزود خدمة وليس طالب ──
+        return False, "تحية", "", 0
     if is_service_provider(text_norm):
-        return False, "مزود_خدمة_وليس_طالب", "", 0
-
-    # ── فلتر 6: سؤال معلوماتي (هل يعرف أحد...) - أهم فلتر جديد ──
-    # هذا الفلتر يرفض بشكل قاطع رسائل مثل "احد يعرف الجدول نزل؟"
-    # طالما لم يوجد فيها فعل تنفيذ حقيقي (يصمم/يبرمج/يحل...)
+        return False, "مزود", "", 0
     if is_knowledge_question(text_norm):
-        return False, "سؤال_معلوماتي_وليس_طلب", "", 0
-
-    # ── فلتر 7: استفسار صريح بدون طلب تنفيذ ──
+        return False, "سؤال_معلوماتي", "", 0
     if is_pure_inquiry(text_norm):
-        has_execution = any(re.search(p, text_norm) for p in EXECUTION_PATTERNS)
-        if not has_execution:
-            return False, "استفسار_فقط", "", 0
+        if not any(re.search(p, text_norm) for p in EXECUTION_PATTERNS):
+            return False, "استفسار", "", 0
 
-    # ── اكتشاف نية التنفيذ ──
-    has_execution_intent = any(re.search(p, text_norm) for p in EXECUTION_PATTERNS)
-    has_service_specific = any(re.search(p, text_norm) for p in SERVICE_SPECIFIC_PATTERNS)
+    has_exec = any(re.search(p, text_norm) for p in EXECUTION_PATTERNS)
+    has_spec = any(re.search(p, text_norm) for p in SERVICE_SPECIFIC_PATTERNS)
+    if not has_exec and not has_spec:
+        return False, "لا_طلب", "", 0
 
-    if not has_execution_intent and not has_service_specific:
-        return False, "لا_طلب_تنفيذ", "", 0
-
-    # ── حساب الاستعجال ──
     urgency = get_urgency_score(text_norm)
-
-    # ── تصنيف نوع الخدمة ──
     service_type = classify_service_type(text_norm)
-
-    # ── تحديد التصنيف النهائي ──
-    if has_execution_intent:
-        classification = "طلب_تنفيذ_مؤكد"
-    else:
-        classification = "طلب_خدمة_محتمل"
-
+    classification = "طلب_مؤكد" if has_exec else "طلب_محتمل"
     return True, classification, service_type, urgency
 
-# ================== 14. دالة إنشاء الروابط الذكية ==================
-def get_smart_links(chat, event_id: int) -> tuple[str, str]:
+# ================== 13. ⭐ الرد الذكي من OpenRouter ==================
+async def generate_reply_from_ai(text: str, fallback: str) -> str:
+    """
+    يطلب من AI كتابة الرد كامل.
+    لو فشل → يرجع للقالب الاحتياطي.
+    """
+    if not ai_client:
+        return build_fallback_reply(fallback)
+
+    prompt = f"""أنت موظف خدمة عملاء في "أكاديمية خدمات طلابية فورية".
+شعارنا: ⚡ سرعة | 🏆 جودة | ✅ موثوقية
+
+رسالة الطالب: "{text}"
+
+اكتب رد بشري قصير جداً (سطر أو سطرين فقط)، باللهجة الخليجية المبسطة.
+
+قواعد صارمة:
+1. ابدأ بـ "هلا 🌟" أو "هلا والله" أو "هلا" فقط
+2. بعدها "أبشر بسعدك في [نوع الخدمة]" أو "أبشر، خله علينا"
+3. اذكر نوع الخدمة بدقة (واجب رياضيات / تصميم شعار / درس فيزياء...)
+4. ممنوع منعاً باتاً: ذكر أسعار، وعود بمواعيد، كلمة "بوت"، كلمة "AI"، إطالة
+5. لا تضع توقيع
+6. لا تستخدم أكثر من إيموجي واحد
+
+أمثلة:
+- "أبي أحد يحل واجب رياضيات" → "هلا 🌟
+أبشر بسعدك في واجب رياضيات"
+- "ابغى تصميم شعار" → "هلا والله
+أبشر بسعدك في تصميم شعار"
+- "محتاج بحث عن التلوث" → "هلا
+أبشر، بحث التلوث خله علينا"
+
+اكتب الرد فقط بدون أي شرح إضافي:"""
+
+    try:
+        response = await ai_client.chat.completions.create(
+            model=AI_MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=100,
+        )
+
+        reply = response.choices[0].message.content.strip()
+        reply = reply.strip('"').strip("'").strip()
+
+        # فلاتر أمان
+        forbidden = ["بوت", "AI", "ذكاء اصطناعي", "سعر", "ريال", "دولار", "دفع", "موعد التسليم"]
+        for word in forbidden:
+            if word.lower() in reply.lower():
+                logger.warning(f"⚠️ AI كتب كلمة ممنوعة: {word}")
+                return build_fallback_reply(fallback)
+
+        if len(reply) > 150:
+            logger.warning(f"⚠️ AI رد طويل: {len(reply)}")
+            return build_fallback_reply(fallback)
+
+        if not reply or len(reply) < 5:
+            return build_fallback_reply(fallback)
+
+        logger.info(f"🤖 AI كتب: {reply[:60]}")
+        return reply
+
+    except Exception as e:
+        logger.error(f"❌ فشل AI: {e}")
+        return build_fallback_reply(fallback)
+
+
+def build_fallback_reply(fallback: str) -> str:
+    """رد احتياطي لو AI فشل"""
+    return random.choice([
+        f"هلا 🌟\nأبشر بسعدك في {fallback}",
+        f"هلا\nأبشر، {fallback} خله علينا",
+        f"هلا والله\nأبشر بسعدك في {fallback} ✅",
+        f"هلا 🌟\nطلبك {fallback} عندنا",
+    ])
+
+def extract_summary(service_type: str, text: str) -> str:
+    if service_type and service_type != "📌 خدمة طلابية":
+        return service_type.replace("📌", "").replace("|", "").strip()
+    keywords = ["واجب", "بحث", "تقرير", "مشروع", "تصميم", "برمجة",
+                "ترجمة", "عرض", "بوربوينت", "اكسل", "درس", "شرح",
+                "اختبار", "عذر", "شعار", "لوجو"]
+    t = normalize_arabic(text)
+    for kw in keywords:
+        if kw in t:
+            return kw
+    return "طلبك"
+
+async def reply_like_human(client, user_id: int, text: str, fallback: str):
+    """يرد على الطالب برد من AI"""
+    try:
+        await asyncio.sleep(random.uniform(4, 10))
+
+        reply = await generate_reply_from_ai(text, fallback)
+
+        async with client.action(user_id, 'typing'):
+            await asyncio.sleep(max(2, len(reply) / 15))
+
+        await client.send_message(user_id, reply)
+        logger.info(f"✅ رد → {user_id} | {reply[:60]}")
+    except Exception as e:
+        logger.error(f"فشل الرد: {e}")
+
+# ================== 14. إرسال حساب الأكاديمية ==================
+async def send_academy_account(client, user_id: int, student_name: str):
+    """يرسل للزبون حساب الأكاديمية الرسمي"""
+    try:
+        await asyncio.sleep(random.uniform(2, 5))
+
+        message = (
+            f"هلا {student_name} 🌟\n"
+            f"\n"
+            f"شكراً لتواصلك معنا.\n"
+            f"\n"
+            f"📌 *حساب {ACADEMY_NAME} الرسمي:*\n"
+            f"@{ACADEMY_USERNAME}\n"
+            f"\n"
+            f"👈 تواصل معه مباشرة، وسيقدم لك خدمتك بأفضل شكل.\n"
+            f"\n"
+            f"{ACADEMY_TAGLINE}"
+        )
+
+        async with client.action(user_id, 'typing'):
+            await asyncio.sleep(2)
+
+        await client.send_message(user_id, message)
+        logger.info(f"📌 حساب الأكاديمية → {user_id}")
+
+    except Exception as e:
+        logger.error(f"فشل إرسال حساب الأكاديمية: {e}")
+
+# ================== 15. الإشعار ==================
+async def notify_owner_reply(client, student, reply_text: str):
+    if not OWNER_CHAT_ID:
+        return
+
+    student_name = getattr(student, 'first_name', 'طالب') or 'طالب'
+    username = getattr(student, 'username', None)
+    user_id = student.id
+
+    info = REPLIED_STUDENTS.get(user_id, {})
+    original = info.get('text', '')[:120]
+    service = info.get('service', 'طلب')
+
+    notification = (
+        f"💬 *الطالب رد عليك!*\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"👤 *الاسم:* {student_name}\n"
+        f"🔖 *اليوزر:* @{username or 'بدون'}\n"
+        f"🎯 *الخدمة:* {service}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📝 *طلبه الأصلي:*\n_{original}_\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"💬 *ردّه الآن:*\n_{reply_text[:200]}_\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🔥 *تدخّل الآن!*"
+    )
+
+    buttons = []
+    if username:
+        buttons.append([Button.url("💬 فتح المحادثة", f"https://t.me/{username}")])
+    else:
+        buttons.append([Button.url("💬 فتح المحادثة", f"tg://user?id={user_id}")])
+
+    try:
+        await client.send_message(OWNER_CHAT_ID, notification, buttons=buttons)
+        logger.info(f"🔔 إشعار → {student_name}")
+    except Exception as e:
+        logger.error(f"فشل الإشعار: {e}")
+
+# ================== 16. الروابط ==================
+def get_smart_links(chat, event_id: int):
     chat_id = chat.id
     chat_username = getattr(chat, 'username', None)
+    group_link = INVITE_LINKS.get(chat_id) or (f"https://t.me/{chat_username}" if chat_username else DEFAULT_INVITE_LINK or "#")
 
-    group_link = "#"
     msg_link = "#"
-
-    if chat_id in INVITE_LINKS:
-        group_link = INVITE_LINKS[chat_id]
-    elif chat_username:
-        group_link = f"https://t.me/{chat_username}"
-    elif DEFAULT_INVITE_LINK:
-        group_link = DEFAULT_INVITE_LINK
-
     if chat_username:
         msg_link = f"https://t.me/{chat_username}/{event_id}"
     else:
@@ -488,45 +576,33 @@ def get_smart_links(chat, event_id: int) -> tuple[str, str]:
                 msg_link = f"https://t.me/c/{abs(chat_id)}/{event_id}"
         except Exception:
             pass
-
     return group_link, msg_link
 
-# ================== 15. ⭐ تنسيق رسالة القناة ==================
-def format_forward_message(
-    event, sender, chat, radar_name: str,
-    classification: str, service_type: str,
-    text: str, urgency: int = 0,
-    is_special: bool = False
-) -> tuple[str, list]:
+# ================== 17. تنسيق الرسالة ==================
+def format_forward_message(event, sender, chat, radar_name, classification, service_type, text, urgency=0, is_special=False):
     username = getattr(sender, 'username', None)
     first_name = getattr(sender, 'first_name', 'مستخدم')
     last_name = getattr(sender, 'last_name', '')
-    full_name = f"{first_name} {last_name}".strip() or first_name
+    full_name = f"{first_name} {last_name}".strip() or "مستخدم"
     user_id = sender.id
     chat_title = getattr(chat, 'title', 'مجموعة')
     group_link, msg_link = get_smart_links(chat, event.id)
 
-    # عرض النص بشكل واضح
-    if len(text) > 350:
-        display_text = text[:350] + "..."
-    else:
-        display_text = text
-
-    # أيقونة الاستعجال
+    display_text = text[:350] + "..." if len(text) > 350 else text
     urgency_icons = {0: "", 1: "⚡", 2: "🔥", 3: "🚨"}
     urgency_icon = urgency_icons.get(urgency, "")
 
     if is_special:
         msg = (
-            f"🔴 **تحويل فوري | قناة خاصة**\n"
-            f"🕐 `{datetime.now().strftime('%H:%M:%S')}` | عبر {radar_name}\n"
+            f"🔴 **تحويل فوري**\n"
+            f"🕐 `{datetime.now().strftime('%H:%M:%S')}` | {radar_name}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"👤 **المرسل:** {full_name}\n"
             f"🔖 **اليوزر:** @{username or 'بدون'}\n"
             f"📍 **المصدر:** {chat_title} ⭐\n"
-            f"🔗 [الرسالة الأصلية]({msg_link})\n"
+            f"🔗 [الرسالة]({msg_link})\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"📝الطلب:\n_{display_text}_\n"
+            f"📝 الطلب:\n_{display_text}_\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"👇 **الطلب👇🏻:**"
         )
@@ -538,33 +614,31 @@ def format_forward_message(
             f"👤 **الطالب:** {full_name}\n"
             f"🔖 **اليوزر:** @{username or 'بدون'}\n"
             f"📍 **المصدر:** {chat_title}\n"
-            f"🔗 [الرسالة الأصلية]({msg_link})\n"
+            f"🔗 [الرسالة]({msg_link})\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"🎯 **نوع الخدمة:** {service_type}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"📝الطلب:\n_{display_text}_\n"
+            f"📝 الطلب:\n_{display_text}_\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"👇 **الطلب:👇🏻**"
+            f"👇 **الطلب👇🏻:**"
         )
 
     buttons = []
     if username:
         buttons.append([Button.url("💬 مراسلة الطالب", f"https://t.me/{username}")])
     else:
-        buttons.append([Button.url("💬 مراسلة الطالب (خاص)", f"tg://user?id={user_id}")])
+        buttons.append([Button.url("💬 مراسلة الطالب", f"tg://user?id={user_id}")])
 
     if group_link and group_link != "#":
         buttons.append([Button.url("👥 الانضمام للمجموعة", group_link)])
 
     if msg_link and msg_link != "#":
-        # التعديل هنا: استخدام getattr لتجنب الخطأ إذا كانت المجموعة خاصة وليس لها username
-        chat_username = getattr(chat, 'username', None)
-        btn_text = "🔗 رؤية الرسالة" if chat_username else "🔗 الرسالة (للأعضاء فقط)"
+        btn_text = "🔗 رؤية الرسالة" if getattr(chat, 'username', None) else "🔗 الرسالة"
         buttons.append([Button.url(btn_text, msg_link)])
 
     return msg, buttons
 
-# ================== 16. دالة الرصد الرئيسية ==================
+# ================== 18. الرصد ==================
 async def start_monitoring(acc_info: dict):
     client = TelegramClient(
         StringSession(acc_info['session']),
@@ -575,7 +649,43 @@ async def start_monitoring(acc_info: dict):
         retry_delay=3
     )
     radar_name = acc_info['name']
+    is_replier = (radar_name == REPLIER_ACCOUNT)
 
+    # ── مستمع الخاص ──
+    if is_replier:
+        @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
+        async def private_handler(event):
+            try:
+                sender = await event.get_sender()
+                user_id = sender.id
+
+                if user_id == OWNER_CHAT_ID:
+                    return
+                me = await client.get_me()
+                if user_id == me.id:
+                    return
+
+                text = event.raw_text.strip()
+                if not text:
+                    return
+
+                if user_id in REPLIED_STUDENTS:
+                    info = REPLIED_STUDENTS[user_id]
+
+                    await notify_owner_reply(client, sender, text)
+
+                    if not info.get('academy_sent'):
+                        await send_academy_account(
+                            client,
+                            user_id,
+                            getattr(sender, 'first_name', 'عزيزنا')
+                        )
+                        info['academy_sent'] = True
+
+            except Exception as e:
+                logger.error(f"خطأ الخاص: {e}")
+
+    # ── مستمع الرسائل العامة ──
     @client.on(events.NewMessage)
     async def message_handler(event):
         try:
@@ -591,63 +701,88 @@ async def start_monitoring(acc_info: dict):
             chat = await event.get_chat()
             chat_id = chat.id
 
-            # تحويل فوري من القناة الخاصة
-            if SPECIAL_CHANNEL_ID > 0 and chat_id == SPECIAL_CHANNEL_ID:
-                logger.info(f"⭐ [{radar_name}] تحويل فوري من القناة الخاصة")
+            if SPECIAL_CHANNEL_ID != 0 and chat_id == SPECIAL_CHANNEL_ID:
+                logger.info(f"⭐ [{radar_name}] تحويل فوري")
                 msg, buttons = format_forward_message(
                     event, sender, chat, radar_name,
-                    classification="تحويل_فوري", service_type="خدمة خاصة",
-                    text=text, urgency=0, is_special=True
+                    "تحويل_فوري", "خدمة خاصة", text, 0, is_special=True
                 )
-                await client.send_message(TARGET_CHANNEL, msg, buttons=buttons, silent=False)
+                await client.send_message(TARGET_CHANNEL, msg, buttons=buttons)
                 return
 
-            # تحليل الرسالة
             is_valid, classification, service_type, urgency = analyze_message(text)
             if not is_valid:
-                logger.debug(f"🚫 [{radar_name}] {classification} | {text[:40]}")
+                logger.debug(f"🚫 [{radar_name}] {classification}")
                 return
 
-            msg, buttons = format_forward_message(
-                event, sender, chat, radar_name,
-                classification, service_type, text, urgency, is_special=False
-            )
-            await client.send_message(TARGET_CHANNEL, msg, buttons=buttons, silent=False)
-            logger.info(f"✅ [{radar_name}] {classification} | {service_type} | ⚡{urgency} | {text[:35]}...")
+            # إرسال للقناة (كل الحسابات ما عدا حساب الرد)
+            if not is_replier:
+                msg, buttons = format_forward_message(
+                    event, sender, chat, radar_name,
+                    classification, service_type, text, urgency
+                )
+                await client.send_message(TARGET_CHANNEL, msg, buttons=buttons)
+                logger.info(f"✅ [{radar_name}] {classification} | {service_type}")
+
+            # الرد الذكي (حساب الرد فقط)
+            if is_replier and AUTO_REPLY_ENABLED and can_reply_today():
+                try:
+                    summary = extract_summary(service_type, text)
+
+                    asyncio.create_task(
+                        reply_like_human(client, sender.id, text, summary)
+                    )
+
+                    REPLIED_STUDENTS[sender.id] = {
+                        'name': getattr(sender, 'first_name', ''),
+                        'username': getattr(sender, 'username', None),
+                        'text': text,
+                        'service': summary,
+                        'time': datetime.now(),
+                        'academy_sent': False,
+                    }
+
+                    logger.info(f"📤 [{radar_name}] رد على {sender.id}")
+
+                except Exception as e:
+                    logger.error(f"فشل الرد: {e}")
 
         except Exception as e:
-            logger.error(f"❌ [{radar_name}] خطأ في المعالجة: {e}", exc_info=True)
+            logger.error(f"❌ [{radar_name}]: {e}", exc_info=True)
 
+    # ── الحلقة ──
     while True:
         try:
             await client.start()
-            logger.info(f"✅ {radar_name} متصل بنجاح وبدأ الرصد!")
+            logger.info(f"✅ {radar_name} متصل!")
             await client.run_until_disconnected()
         except Exception as e:
-            logger.error(f"⚠️ {radar_name} انقطع الاتصال: {e}")
+            logger.error(f"⚠️ {radar_name} انقطع: {e}")
             await asyncio.sleep(5)
         finally:
             if client.is_connected():
                 await client.disconnect()
 
-# ================== 17. التشغيل الرئيسي ==================
+# ================== 19. التشغيل ==================
 async def main():
-    logger.info("🚀 بدء تشغيل رادار الخدمات الطلابية 2.0...")
-    logger.info(f"📊 الحسابات النشطة: {len(accounts)}")
-    logger.info(f"🎯 القناة المستهدفة: {TARGET_CHANNEL}")
-    if SPECIAL_CHANNEL_ID > 0:
-        logger.info(f"⭐ القناة الخاصة للتحويل الفوري: {SPECIAL_CHANNEL_ID}")
+    logger.info("🚀 بدء الرادار 4.0...")
+    logger.info(f"📊 الحسابات: {len(accounts)}")
+    logger.info(f"🎯 القناة: {TARGET_CHANNEL}")
+    logger.info(f"🎯 حساب الرد: {REPLIER_ACCOUNT}")
+    logger.info(f"📩 الإشعارات: {OWNER_CHAT_ID or 'غير محدد!'}")
+    logger.info(f"🏫 الأكاديمية: @{ACADEMY_USERNAME}")
+    logger.info(f"🤖 AI: {'مفعّل' if ai_client else 'معطّل'} | {AI_MODEL_NAME}")
 
     tasks = [start_monitoring(acc) for acc in accounts]
     await asyncio.gather(*tasks, return_exceptions=True)
 
-# ================== 18. نقطة الدخول ==================
 if __name__ == '__main__':
+    threading.Thread(target=run_flask, daemon=True).start()
+    logger.info(f"✅ Web على {os.environ.get('PORT', 10000)}")
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("👋 تم إيقاف البوت يدوياً")
+        logger.info("👋 إيقاف يدوي")
     except Exception as e:
-        logger.error(f"💥 خطأ فادح في التشغيل: {e}", exc_info=True)
-        import traceback
-        traceback.print_exc()
+        logger.error(f"💥 خطأ: {e}", exc_info=True)

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎓 رادار الخدمات الطلابية 4.0
-- رصد الطلبات → القناة
-- رد ذكي من OpenRouter
-- إرسال حساب الأكاديمية عند الرد
-- إشعار لك عند رد الطالب
+🎓 رادار الخدمات الطلابية 5.0
+- رادار-1 (في المجموعات): يرصد → قناة + يرسل بطاقة لرادار-2
+- رادار-2 (خارج المجموعات): يستقبل البطاقات → يرد على الطلاب
+- عند رد الطالب: إشعار لك + إرسال حساب الأكاديمية
+- AI عبر OpenRouter
 """
 
 # ================== 1. المكتبات ==================
@@ -75,7 +75,7 @@ SESSION_3 = os.environ.get("SESSION_3", "").strip()
 MIN_MSG_LENGTH = int(os.environ.get("MIN_MSG_LENGTH", "10"))
 MAX_MSG_LENGTH = int(os.environ.get("MAX_MSG_LENGTH", "150"))
 
-# ================== 5. ⭐ الإعدادات الثابتة ==================
+# ================== 5. الإعدادات الثابتة ==================
 REPLIER_ACCOUNT = "رادار-2"
 AUTO_REPLY_ENABLED = True
 AUTO_REPLY_DAILY_LIMIT = 40
@@ -83,6 +83,10 @@ AUTO_REPLY_DAILY_LIMIT = 40
 ACADEMY_USERNAME = "m_7_1_1_m"
 ACADEMY_NAME = "أكاديمية خدمات طلابية فورية"
 ACADEMY_TAGLINE = "⚡ سرعة | 🏆 جودة | ✅ موثوقية"
+
+# ⭐ التواصل بين الحسابين
+RADAR1_USERNAME = os.environ.get("RADAR1_USERNAME", "").strip()
+RADAR2_USERNAME = os.environ.get("RADAR2_USERNAME", "").strip()
 
 # ================== 6. متغيرات البيئة (أسرار) ==================
 OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
@@ -134,12 +138,14 @@ if not accounts:
 
 logger.info(f"📊 الحسابات: {len(accounts)}")
 logger.info(f"🎯 حساب الرد: {REPLIER_ACCOUNT}")
+logger.info(f"📡 رادار-1 يوزر: @{RADAR1_USERNAME}")
+logger.info(f"📡 رادار-2 يوزر: @{RADAR2_USERNAME}")
 
 SPECIAL_CHANNEL_ID = int(os.environ.get("SPECIAL_CHANNEL_ID", "0"))
 INVITE_LINKS = {}
 DEFAULT_INVITE_LINK = os.environ.get("DEFAULT_INVITE_LINK", "")
 
-# ================== 10. القائمة السوداء ==================
+# ================== 10. القائمة السوداء + الأنماط ==================
 BLACKLIST_KEYWORDS = {
     'للتواصل', 'للتسجيل', 'واتساب', 'واتس', 'راسلني', 'لبيع',
     'سعر', 'ريال', 'دولار', 'خصم', 'ضمان', 'استثمار', 'ربح',
@@ -260,7 +266,6 @@ CONTACT_WORDS = [
     'call', 'رقم', 'جوال', 'موبايل', 'للتحميل', 'للتسجيل', 'اضغط هنا', 'link', 'رابط'
 ]
 
-# ================== 11. منع التكرار ==================
 MAX_SENT_IDS = 10000
 sent_messages = deque(maxlen=MAX_SENT_IDS)
 
@@ -271,7 +276,7 @@ def is_duplicate(chat_id: int, message_id: int) -> bool:
     sent_messages.append(key)
     return False
 
-# ================== 12. معالجة النصوص ==================
+# ================== 11. معالجة النصوص ==================
 def normalize_arabic(text: str) -> str:
     text = re.sub(r'[إأآا]', 'ا', text)
     text = re.sub(r'[ةه]', 'ه', text)
@@ -388,12 +393,8 @@ def analyze_message(text: str):
     classification = "طلب_مؤكد" if has_exec else "طلب_محتمل"
     return True, classification, service_type, urgency
 
-# ================== 13. ⭐ الرد الذكي من OpenRouter ==================
+# ================== 12. AI ==================
 async def generate_reply_from_ai(text: str, fallback: str) -> str:
-    """
-    يطلب من AI كتابة الرد كامل.
-    لو فشل → يرجع للقالب الاحتياطي.
-    """
     if not ai_client:
         return build_fallback_reply(fallback)
 
@@ -408,7 +409,7 @@ async def generate_reply_from_ai(text: str, fallback: str) -> str:
 1. ابدأ بـ "هلا 🌟" أو "هلا والله" أو "هلا" فقط
 2. بعدها "أبشر بسعدك في [نوع الخدمة]" أو "أبشر، خله علينا"
 3. اذكر نوع الخدمة بدقة (واجب رياضيات / تصميم شعار / درس فيزياء...)
-4. ممنوع منعاً باتاً: ذكر أسعار، وعود بمواعيد، كلمة "بوت"، كلمة "AI"، إطالة
+4. ممنوع: ذكر أسعار، وعود بمواعيد، كلمة "بوت"، كلمة "AI"، إطالة
 5. لا تضع توقيع
 6. لا تستخدم أكثر من إيموجي واحد
 
@@ -433,18 +434,13 @@ async def generate_reply_from_ai(text: str, fallback: str) -> str:
         reply = response.choices[0].message.content.strip()
         reply = reply.strip('"').strip("'").strip()
 
-        # فلاتر أمان
         forbidden = ["بوت", "AI", "ذكاء اصطناعي", "سعر", "ريال", "دولار", "دفع", "موعد التسليم"]
         for word in forbidden:
             if word.lower() in reply.lower():
                 logger.warning(f"⚠️ AI كتب كلمة ممنوعة: {word}")
                 return build_fallback_reply(fallback)
 
-        if len(reply) > 150:
-            logger.warning(f"⚠️ AI رد طويل: {len(reply)}")
-            return build_fallback_reply(fallback)
-
-        if not reply or len(reply) < 5:
+        if len(reply) > 150 or len(reply) < 5:
             return build_fallback_reply(fallback)
 
         logger.info(f"🤖 AI كتب: {reply[:60]}")
@@ -456,7 +452,6 @@ async def generate_reply_from_ai(text: str, fallback: str) -> str:
 
 
 def build_fallback_reply(fallback: str) -> str:
-    """رد احتياطي لو AI فشل"""
     return random.choice([
         f"هلا 🌟\nأبشر بسعدك في {fallback}",
         f"هلا\nأبشر، {fallback} خله علينا",
@@ -477,10 +472,8 @@ def extract_summary(service_type: str, text: str) -> str:
     return "طلبك"
 
 async def reply_like_human(client, user_id: int, text: str, fallback: str):
-    """يرد على الطالب برد من AI"""
     try:
         await asyncio.sleep(random.uniform(4, 10))
-
         reply = await generate_reply_from_ai(text, fallback)
 
         async with client.action(user_id, 'typing'):
@@ -491,9 +484,33 @@ async def reply_like_human(client, user_id: int, text: str, fallback: str):
     except Exception as e:
         logger.error(f"فشل الرد: {e}")
 
+# ================== 13. ⭐ بطاقة الطالب ==================
+async def send_student_card(client, sender, text, service_type):
+    """رادار-1 يرسل بطاقة الطالب لرادار-2"""
+    if not RADAR2_USERNAME:
+        logger.warning("⚠️ RADAR2_USERNAME غير محدد — لا يمكن إرسال البطاقة")
+        return
+    try:
+        username = getattr(sender, 'username', '') or ''
+        name = getattr(sender, 'first_name', '') or ''
+        # استبدل \n في النص حتى لا يكسر البطاقة
+        safe_text = text.replace("\n", " ").replace(":", "،")
+
+        card = (
+            f"🎴 CARD\n"
+            f"USER_ID:{sender.id}\n"
+            f"NAME:{name}\n"
+            f"USERNAME:{username}\n"
+            f"SERVICE:{service_type}\n"
+            f"TEXT:{safe_text}"
+        )
+        await client.send_message(RADAR2_USERNAME, card)
+        logger.info(f"🎴 بطاقة → رادار-2 | الطالب: {sender.id}")
+    except Exception as e:
+        logger.error(f"فشل إرسال البطاقة: {e}")
+
 # ================== 14. إرسال حساب الأكاديمية ==================
 async def send_academy_account(client, user_id: int, student_name: str):
-    """يرسل للزبون حساب الأكاديمية الرسمي"""
     try:
         await asyncio.sleep(random.uniform(2, 5))
 
@@ -578,7 +595,7 @@ def get_smart_links(chat, event_id: int):
             pass
     return group_link, msg_link
 
-# ================== 17. تنسيق الرسالة ==================
+# ================== 17. تنسيق رسالة القناة ==================
 def format_forward_message(event, sender, chat, radar_name, classification, service_type, text, urgency=0, is_special=False):
     username = getattr(sender, 'username', None)
     first_name = getattr(sender, 'first_name', 'مستخدم')
@@ -669,6 +686,42 @@ async def start_monitoring(acc_info: dict):
                 if not text:
                     return
 
+                # ── 🎴 بطاقة من رادار-1 ──
+                if text.startswith("🎴 CARD"):
+                    try:
+                        lines = text.split("\n")
+                        data = {}
+                        for line in lines[1:]:
+                            if ":" in line:
+                                key, val = line.split(":", 1)
+                                data[key.strip()] = val.strip()
+
+                        student_id = int(data.get("USER_ID", "0"))
+                        student_name = data.get("NAME", "عزيزنا")
+                        original_text = data.get("TEXT", "")
+                        service = data.get("SERVICE", "طلبك")
+
+                        if not student_id:
+                            return
+
+                        await reply_like_human(client, student_id, original_text, service)
+
+                        REPLIED_STUDENTS[student_id] = {
+                            'name': student_name,
+                            'username': data.get("USERNAME", ""),
+                            'text': original_text,
+                            'service': service,
+                            'time': datetime.now(),
+                            'academy_sent': False,
+                        }
+
+                        logger.info(f"🎴 استقبلت بطاقة → رد على {student_id}")
+
+                    except Exception as e:
+                        logger.error(f"خطأ في معالجة البطاقة: {e}")
+                    return
+
+                # ── ردود الطلاب العادية ──
                 if user_id in REPLIED_STUDENTS:
                     info = REPLIED_STUDENTS[user_id]
 
@@ -715,7 +768,7 @@ async def start_monitoring(acc_info: dict):
                 logger.debug(f"🚫 [{radar_name}] {classification}")
                 return
 
-            # إرسال للقناة (كل الحسابات ما عدا حساب الرد)
+            # ── رادار-1: يرسل للقناة + بطاقة لرادار-2 ──
             if not is_replier:
                 msg, buttons = format_forward_message(
                     event, sender, chat, radar_name,
@@ -724,28 +777,10 @@ async def start_monitoring(acc_info: dict):
                 await client.send_message(TARGET_CHANNEL, msg, buttons=buttons)
                 logger.info(f"✅ [{radar_name}] {classification} | {service_type}")
 
-            # الرد الذكي (حساب الرد فقط)
-            if is_replier and AUTO_REPLY_ENABLED and can_reply_today():
-                try:
-                    summary = extract_summary(service_type, text)
-
-                    asyncio.create_task(
-                        reply_like_human(client, sender.id, text, summary)
-                    )
-
-                    REPLIED_STUDENTS[sender.id] = {
-                        'name': getattr(sender, 'first_name', ''),
-                        'username': getattr(sender, 'username', None),
-                        'text': text,
-                        'service': summary,
-                        'time': datetime.now(),
-                        'academy_sent': False,
-                    }
-
-                    logger.info(f"📤 [{radar_name}] رد على {sender.id}")
-
-                except Exception as e:
-                    logger.error(f"فشل الرد: {e}")
+                # 🆕 بطاقة لرادار-2
+                asyncio.create_task(
+                    send_student_card(client, sender, text, service_type)
+                )
 
         except Exception as e:
             logger.error(f"❌ [{radar_name}]: {e}", exc_info=True)
@@ -765,12 +800,14 @@ async def start_monitoring(acc_info: dict):
 
 # ================== 19. التشغيل ==================
 async def main():
-    logger.info("🚀 بدء الرادار 4.0...")
+    logger.info("🚀 بدء الرادار 5.0...")
     logger.info(f"📊 الحسابات: {len(accounts)}")
     logger.info(f"🎯 القناة: {TARGET_CHANNEL}")
     logger.info(f"🎯 حساب الرد: {REPLIER_ACCOUNT}")
     logger.info(f"📩 الإشعارات: {OWNER_CHAT_ID or 'غير محدد!'}")
     logger.info(f"🏫 الأكاديمية: @{ACADEMY_USERNAME}")
+    logger.info(f"📡 رادار-1: @{RADAR1_USERNAME}")
+    logger.info(f"📡 رادار-2: @{RADAR2_USERNAME}")
     logger.info(f"🤖 AI: {'مفعّل' if ai_client else 'معطّل'} | {AI_MODEL_NAME}")
 
     tasks = [start_monitoring(acc) for acc in accounts]
